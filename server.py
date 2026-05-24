@@ -299,7 +299,12 @@ self.addEventListener('fetch', e => e.respondWith(fetch(e.request).catch(() => c
 
 @app.route("/")
 def index():
-    return MOBILE_HTML
+    html = MOBILE_HTML
+    if ANTHROPIC_KEY:
+        # Sunucuda key var: setup ekranını gizle, chat'i göster
+        html = html.replace('id="setup"', 'id="setup" style="display:none!important"')
+        html = html.replace('id="chat-screen"', 'id="chat-screen" style="display:flex!important"')
+    return html
 
 # ── HTML ───────────────────────────────────────────────────────────────────
 MOBILE_HTML = """<!DOCTYPE html>
