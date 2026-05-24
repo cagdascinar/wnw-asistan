@@ -504,37 +504,51 @@ async function checkStatus() {
 
 async function init() {
   const st = await checkStatus();
-  if (!st) return;
+  if (!st) { document.getElementById('setup').style.display = 'flex'; return; }
 
-  // Show/hide sections
-  if (serverKey) document.getElementById('apiKeySection').style.display = 'none';
-  if (pwRequired) document.getElementById('passwordSection').style.display = 'block';
-
-  if (apiKey || serverKey) {
-    if (!pwRequired || password) {
-      showChat(st.boards);
-      return;
+  if (st.server_key) {
+    // Sunucuda key var, setup gerekmez
+    if (!st.password_required) {
+      showChat(st.boards); return;
     }
+    // Şifre gerekiyor ama daha önce kaydedilmiş
+    if (password) { showChat(st.boards); return; }
+    document.getElementById('apiKeySection').style.display = 'none';
+    document.getElementById('passwordSection').style.display = 'block';
+  } else {
+    // Kullanıcının key'i var mı?
+    if (apiKey) {
+      if (!st.password_required || password) { showChat(st.boards); return; }
+    }
+    if (st.password_required) document.getElementById('passwordSection').style.display = 'block';
   }
   document.getElementById('setup').style.display = 'flex';
 }
 
 async function startChat() {
-  const k = document.getElementById('apiKeyInput').value.trim();
-  const p = document.getElementById('pwInput').value.trim();
-
-  if (!serverKey && k) {
-    if (!k.startsWith('sk-ant')) { toast('Geçerli API key girin (sk-ant-...)'); return; }
-    apiKey = k;
-    localStorage.setItem('ww_key', k);
-  }
-  if (pwRequired) {
-    password = p;
-    localStorage.setItem('ww_pw', p);
-  }
-
   const st = await checkStatus();
-  showChat(st ? st.boards : 0);
+  if (!st) { toast('Sunucuya bağlanılamıyor'); return; }
+
+  if (st.server_key) {
+    if (st.password_required) {
+      const p = document.getElementById('pwInput').value.trim();
+      if (!p) { toast('Şifre girin'); return; }
+      password = p; localStorage.setItem('ww_pw', p);
+    }
+    showChat(st.boards); return;
+  }
+
+  const k = document.getElementById('apiKeyInput').value.trim();
+  if (!k) { toast('API key girin'); return; }
+  if (!k.startsWith('sk-ant')) { toast('Geçerli API key girin (sk-ant-...)'); return; }
+  apiKey = k; localStorage.setItem('ww_key', k);
+
+  if (st.password_required) {
+    const p = document.getElementById('pwInput').value.trim();
+    if (!p) { toast('Şifre girin'); return; }
+    password = p; localStorage.setItem('ww_pw', p);
+  }
+  showChat(st.boards);
 }
 
 function showChat(boardCount) {
