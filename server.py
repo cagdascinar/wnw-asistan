@@ -662,16 +662,16 @@ init();
 </body>
 </html>"""
 
-if __name__ == "__main__":
-    print("=" * 50)
-    print("  WorknWerk Finans Asistanı")
-    print("=" * 50)
+# Gunicorn veya direkt çalıştırmada panoları yükle
+import threading
+def _load():
     print("Monday.com panoları yükleniyor...")
     count = load_all_boards()
     print(f"✓ {count} pano yüklendi.")
+threading.Thread(target=_load, daemon=True).start()
+
+if __name__ == "__main__":
     host = "0.0.0.0"
     port = int(os.environ.get("PORT", 5050))
-    print(f"\n► Lokal:   http://localhost:{port}")
-    print(f"► Ağ:      http://<IP-adresin>:{port}")
-    print("=" * 50)
+    print(f"► http://localhost:{port}")
     app.run(host=host, port=port, debug=False)
