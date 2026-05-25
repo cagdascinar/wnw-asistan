@@ -200,6 +200,8 @@ def parse_intent(text):
     if month is None and ("gecen ay" in tn or "geçen ay" in t.lower()):
         prev = now.replace(day=1) - timedelta(days=1)
         month = prev.month; year = year or prev.year
+    if month is None and ("bugun" in tn or "bugün" in t.lower() or "dun" in tn or "dün" in t.lower()):
+        month = now.month; year = year or now.year
 
     # Metrik
     count_kw = ["kac adet","kaç adet","kac tane","kaç tane","kac kayit","kaç kayıt","kayit sayisi","kayıt sayısı"]
@@ -586,6 +588,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);
   background:rgba(99,102,241,.25);color:var(--accent2);font-size:12px;
   cursor:pointer;-webkit-appearance:none}
 .retry-btn:active{opacity:.7}
+.copy-btn{margin-top:6px;padding:4px 10px;border-radius:8px;border:none;
+  background:rgba(255,255,255,.06);color:var(--muted);font-size:11px;
+  cursor:pointer;-webkit-appearance:none;display:inline-block}
+.copy-btn:active{background:rgba(16,185,129,.2);color:var(--green)}
 
 .typing{background:var(--card);border-radius:18px;border-bottom-left-radius:4px;
   padding:12px 16px;display:flex;gap:4px;align-items:center}
@@ -811,6 +817,8 @@ function sendMessage(txt) {
       } else {
         addBubble('bot', data.reply);
         messages = data.messages || messages;
+        var firstLine = data.reply.split(String.fromCharCode(10))[0].replace(/[*]/g,'').trim();
+        if (firstLine) setStatus('ok', firstLine.length > 30 ? firstLine.slice(0,28)+'…' : firstLine);
       }
     } catch(e) {
       addBubble('bot', '&#10060; Yanit alinamadi.', true);
@@ -858,6 +866,21 @@ function addBubble(role, text, isErr) {
     rb.textContent = '↩ Tekrar dene';
     (function(q){ rb.onclick = function(){ sendMessage(q); }; })(lastQuery);
     b.appendChild(rb);
+  } else if (role === 'bot' && !isErr) {
+    var cb = document.createElement('button');
+    cb.className = 'copy-btn';
+    cb.textContent = '📋 Kopyala';
+    (function(txt){ cb.onclick = function() {
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(txt).then(function(){ toast('Kopyalandı ✓'); });
+      } else {
+        var ta = document.createElement('textarea');
+        ta.value = txt; document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); document.body.removeChild(ta);
+        toast('Kopyalandı ✓');
+      }
+    }; })(text);
+    b.appendChild(cb);
   }
 
   row.appendChild(av);
@@ -892,7 +915,7 @@ function fmt(t) {
   return String(t)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/[*][*]([^*]+)[*][*]/g,'<b>$1</b>')
-    .replace(/\n/g,'<br>');
+    .replace(/\\n/g,'<br>');
 }
 
 // ── CHIPS ─────────────────────────────────────────────────────────────────
