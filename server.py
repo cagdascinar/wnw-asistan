@@ -13,6 +13,7 @@ MONDAY_API    = "https://api.monday.com/v2"
 CLAUDE_API    = "https://api.anthropic.com/v1/messages"
 
 boards_cache = {}
+last_refresh = 0   # timestamp
 
 # ── MONDAY ─────────────────────────────────────────────────────────────────
 def monday_gql(query):
@@ -25,7 +26,8 @@ def monday_gql(query):
     return data["data"]
 
 def load_all_boards():
-    global boards_cache
+    global boards_cache, last_refresh
+    import time
     boards_cache = {}
     page = 1
     while True:
@@ -42,7 +44,14 @@ def load_all_boards():
         if len(data["boards"]) < 100:
             break
         page += 1
+    last_refresh = time.time()
     return len(boards_cache)
+
+def ensure_fresh_boards():
+    """30 dakikadan eskiyse panoları yenile."""
+    import time
+    if time.time() - last_refresh > 1800:
+        threading.Thread(target=load_all_boards, daemon=True).start()
 
 def find_board(name_q):
     q = name_q.lower().strip()
@@ -98,6 +107,7 @@ def tool_list_boards(query=""):
     return results[:40]
 
 def tool_query_board(board_name, year=None, month=None, group_name=None, metric="sum"):
+    ensure_fresh_boards()
     found = find_board(board_name)
     if not found:
         return {"error": f"'{board_name}' adında pano bulunamadı. list_boards ile kontrol et."}
@@ -496,38 +506,30 @@ if (isIOS && !isStandalone) {
   document.getElementById('installBanner').classList.add('show');
 }
 
-// Check server status first
+// Check server status — retry 3x for Railway cold start
 async function checkStatus() {
-  try {
-    const r = await fetch(BASE + '/api/status');
-    const d = await r.json();
-    serverKey  = d.server_key;
-    pwRequired = d.password_required;
-    return d;
-  } catch { return null; }
+  for (let i = 0; i < 3; i++) {
+    try {
+      const r = await fetch(BASE + '/api/status', {signal: AbortSignal.timeout(10000)});
+      const d = await r.json();
+      serverKey  = d.server_key;
+      pwRequired = d.password_required;
+      return d;
+    } catch { await new Promise(r => setTimeout(r, 2000)); }
+  }
+  return null;
 }
 
 async function init() {
+  document.getElementById('boardCount').textContent = 'Bağlanıyor...';
   const st = await checkStatus();
-  if (!st) { document.getElementById('setup').style.display = 'flex'; return; }
-
-  if (st.server_key) {
-    // Sunucuda key var, setup gerekmez
-    if (!st.password_required) {
-      showChat(st.boards); return;
-    }
-    // Şifre gerekiyor ama daha önce kaydedilmiş
-    if (password) { showChat(st.boards); return; }
-    document.getElementById('apiKeySection').style.display = 'none';
-    document.getElementById('passwordSection').style.display = 'block';
-  } else {
-    // Kullanıcının key'i var mı?
-    if (apiKey) {
-      if (!st.password_required || password) { showChat(st.boards); return; }
-    }
-    if (st.password_required) document.getElementById('passwordSection').style.display = 'block';
+  if (!st) {
+    document.getElementById('boardCount').textContent = '⚠️ Sunucuya ulaşılamıyor';
+    return;
   }
-  document.getElementById('setup').style.display = 'flex';
+  document.getElementById('boardCount').textContent = st.boards + ' pano yüklü ✓';
+  serverKey  = st.server_key;
+  pwRequired = st.password_required;
 }
 
 async function startChat() {
