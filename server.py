@@ -32,41 +32,60 @@ def GET(url, params=None, timeout=6):
     r.raise_for_status()
     return r.json()
 
-# ── Binance spot ────────────────────────────────────────────────────────────
+# ── CryptoCompare fiyat (Binance yerine - cloud IP bloğu yok) ───────────────
+CC = "https://min-api.cryptocompare.com/data"
+
 def fetch_price():
-    return cached("price", 5, _price)
+    return cached("price", 10, _price)
 
 def _price():
-    d = GET("https://api.binance.com/api/v3/ticker/24hr", {"symbol": "BTCUSDT"})
+    d = GET(CC + "/pricemultifull", {"fsyms": "BTC", "tsyms": "USD"})
+    r = d["RAW"]["BTC"]["USD"]
     return {
-        "price":    float(d["lastPrice"]),
-        "change":   float(d["priceChangePercent"]),
-        "high":     float(d["highPrice"]),
-        "low":      float(d["lowPrice"]),
-        "vol_usdt": float(d["quoteVolume"]),
-        "open":     float(d["openPrice"]),
+        "price":    float(r["PRICE"]),
+        "change":   round(float(r["CHANGEPCT24HOUR"]), 2),
+        "high":     float(r["HIGH24HOUR"]),
+        "low":      float(r["LOW24HOUR"]),
+        "vol_usdt": float(r.get("VOLUMEDAYTO", 0)),
+        "open":     float(r["OPEN24HOUR"]),
     }
+
+# interval map: "1h"→histohour, "4h"→histohour(agg=4), "1d"→histoday, "15m"→histominute(agg=15)
+_CC_MAP = {
+    "1m":  ("histominute", 1),
+    "5m":  ("histominute", 5),
+    "15m": ("histominute", 15),
+    "1h":  ("histohour",   1),
+    "4h":  ("histohour",   4),
+    "1d":  ("histoday",    1),
+}
 
 def fetch_klines(interval="1h", limit=100):
     ttl = 60 if interval in ("1m","5m","15m") else 300
     return cached(f"kl_{interval}", ttl, lambda: _klines(interval, limit))
 
 def _klines(interval, limit):
-    raw = GET("https://api.binance.com/api/v3/klines",
-              {"symbol": "BTCUSDT", "interval": interval, "limit": limit})
-    return [{"t": k[0], "o": float(k[1]), "h": float(k[2]),
-             "l": float(k[3]), "c": float(k[4]), "v": float(k[5])} for k in raw]
+    ep, agg = _CC_MAP.get(interval, ("histohour", 1))
+    params = {"fsym": "BTC", "tsym": "USD", "limit": limit, "aggregate": agg}
+    d = GET(f"{CC}/v2/{ep}", params)
+    rows = d["Data"]["Data"]
+    # CryptoCompare time is Unix seconds → ms for frontend
+    return [{"t": int(k["time"]) * 1000, "o": float(k["open"]),
+             "h": float(k["high"]), "l": float(k["low"]),
+             "c": float(k["close"]), "v": float(k["volumeto"])} for k in rows]
 
-# ── Binance Futures funding ─────────────────────────────────────────────────
+# ── Bybit funding rate (Binance futures yerine) ──────────────────────────────
 def fetch_funding():
     return cached("funding", 300, _funding)
 
 def _funding():
     try:
-        d = GET("https://fapi.binance.com/fapi/v1/premiumIndex", {"symbol": "BTCUSDT"})
+        d = GET("https://api.bybit.com/v5/market/tickers",
+                {"category": "linear", "symbol": "BTCUSDT"}, timeout=5)
+        r = d["result"]["list"][0]
         return {
-            "rate": round(float(d.get("lastFundingRate", 0)) * 100, 4),
-            "mark": float(d.get("markPrice", 0)),
+            "rate": round(float(r.get("fundingRate", 0)) * 100, 4),
+            "mark": float(r.get("markPrice", 0)),
         }
     except Exception:
         return {"rate": 0.0, "mark": 0}
