@@ -588,6 +588,22 @@ canvas{border-radius:12px;background:var(--card);border:1px solid var(--brd);dis
 .mbn.short{background:rgba(255,61,90,.1);border-color:var(--sell);color:var(--sell)}
 .modal-cancel{width:100%;background:none;border:1px solid var(--brd);color:var(--sub);padding:12px;border-radius:10px;font-size:14px;cursor:pointer}
 
+/* Kirpi Yorum */
+.yorum-wrap{padding:0 16px 20px}
+.yorum-card{background:var(--card);border:1px solid var(--brd);border-radius:var(--r);padding:16px}
+.yorum-card.mantikli{border-color:var(--buy)}
+.yorum-card.degil{border-color:var(--sell)}
+.yorum-card.dikkat{border-color:var(--hold)}
+.yorum-header{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.yorum-kirpi{font-size:28px}
+.yorum-verdict{font-size:16px;font-weight:800}
+.yorum-card.mantikli .yorum-verdict{color:var(--buy)}
+.yorum-card.degil .yorum-verdict{color:var(--sell)}
+.yorum-card.dikkat .yorum-verdict{color:var(--hold)}
+.yorum-text{font-size:13px;color:#c8c8e0;line-height:1.6}
+.yorum-items{margin-top:10px;display:flex;flex-direction:column;gap:5px}
+.yorum-item{font-size:12px;color:var(--sub);padding:5px 8px;background:rgba(255,255,255,.04);border-radius:7px}
+
 .footer{padding:14px;text-align:center;font-size:10px;color:var(--sub);border-top:1px solid var(--brd)}
 </style>
 </head>
@@ -638,7 +654,7 @@ canvas{border-radius:12px;background:var(--card);border:1px solid var(--brd);dis
 <button class="open-pos-btn" onclick="showPosModal()">&#128200; Pozisyon Aç</button>
 
 <!-- Göstergeler -->
-<div class="sec">GÖSTERGELER</div>
+<div class="sec">&#x1F994; KİRPİ ANALİZ</div>
 <div class="ggrid" id="ggrid"><div style="grid-column:1/-1;color:var(--sub);font-size:13px;padding:20px;text-align:center">Yükleniyor...</div></div>
 
 <!-- Grafik -->
@@ -659,7 +675,20 @@ canvas{border-radius:12px;background:var(--card);border:1px solid var(--brd);dis
 <div class="sec">HABERLER</div>
 <div class="nwrap" id="nwrap"><div style="color:var(--sub);font-size:13px">Yükleniyor...</div></div>
 
-<div class="footer">Binance &bull; CoinGecko &bull; Alternative.me &bull; CryptoCompare &bull; Yatırım tavsiyesi değildir</div>
+<!-- Kirpi Yorum -->
+<div class="sec">&#x1F994; KİRPİ YORUMU</div>
+<div class="yorum-wrap">
+  <div class="yorum-card dikkat" id="yorum-card">
+    <div class="yorum-header">
+      <span class="yorum-kirpi">&#x1F994;</span>
+      <span class="yorum-verdict" id="yorum-verdict">Analiz bekleniyor...</span>
+    </div>
+    <div class="yorum-text" id="yorum-text">Göstergeler yüklendikten sonra Kirpi yorumunu yapacak.</div>
+    <div class="yorum-items" id="yorum-items"></div>
+  </div>
+</div>
+
+<div class="footer">CryptoCompare &bull; CoinGecko &bull; Alternative.me &bull; OKX &bull; Yatırım tavsiyesi değildir</div>
 
 <!-- Pozisyon modal -->
 <div class="modal-bg" id="pos-modal-bg" onclick="hidePosModal(event)">
@@ -909,6 +938,90 @@ function renderGauges(gauges) {
   grid.innerHTML = html;
 }
 
+// ── Kirpi Yorumu ────────────────────────────────────────────────────────────
+function renderYorum(g, price) {
+  var sc = g.total_score;
+  var gauges = g.gauges;
+  var card = document.getElementById('yorum-card');
+  var verdict = document.getElementById('yorum-verdict');
+  var text = document.getElementById('yorum-text');
+  var items = document.getElementById('yorum-items');
+
+  // Gösterge değerlerini bul
+  var fng = null, rsi1 = null, rsi4 = null, macd = null, fund = null;
+  for (var i = 0; i < gauges.length; i++) {
+    var id = gauges[i].id;
+    if (id === 'fng')    fng  = gauges[i];
+    if (id === 'rsi1h')  rsi1 = gauges[i];
+    if (id === 'rsi4h')  rsi4 = gauges[i];
+    if (id === 'macd')   macd = gauges[i];
+    if (id === 'funding') fund = gauges[i];
+  }
+
+  var lines = [];
+  var pros = 0, cons = 0;
+
+  // Fear & Greed
+  if (fng) {
+    if (fng.value < 25) { lines.push('&#x1F7E2; Piyasa aşırı korkuda (' + fng.value + ') — tarihsel AL fırsatı'); pros += 2; }
+    else if (fng.value > 75) { lines.push('&#x1F534; Piyasa açgözlülük zirvesinde (' + fng.value + ') — dikkatli ol'); cons += 2; }
+    else if (fng.value < 40) { lines.push('&#x1F7E1; Korku bölgesi (' + fng.value + ') — temkinli alım düşünülebilir'); pros++; }
+    else { lines.push('&#x26AA; Piyasa nötr bölgede (' + fng.value + ')'); }
+  }
+
+  // RSI
+  if (rsi1) {
+    var r = rsi1.value;
+    if (r < 30) { lines.push('&#x1F7E2; RSI 1s ' + r + ' — aşırı satım, teknik tepki gelebilir'); pros += 2; }
+    else if (r > 70) { lines.push('&#x1F534; RSI 1s ' + r + ' — aşırı alım bölgesinde, düzeltme riski var'); cons += 2; }
+    else if (r < 45) { lines.push('&#x1F7E1; RSI 1s ' + r + ' — zayıf momentum'); cons++; }
+    else { lines.push('&#x1F7E2; RSI 1s ' + r + ' — sağlıklı momentum'); pros++; }
+  }
+  if (rsi4 && rsi4.value < 35) {
+    lines.push('&#x1F7E2; RSI 4s ' + rsi4.value + ' — büyük zaman diliminde de aşırı satım'); pros++;
+  } else if (rsi4 && rsi4.value > 68) {
+    lines.push('&#x1F534; RSI 4s ' + rsi4.value + ' — 4 saatlik trend aşırı alımda'); cons++;
+  }
+
+  // MACD
+  if (macd) {
+    if (macd.value > 0) { lines.push('&#x1F7E2; MACD pozitif — yükseliş momentumu devam ediyor'); pros++; }
+    else { lines.push('&#x1F534; MACD negatif — düşüş baskısı sürüyor'); cons++; }
+  }
+
+  // Funding
+  if (fund) {
+    var fr = fund.value;
+    if (fr > 0.05) { lines.push('&#x1F534; Funding +' + fr + '% — longler over-leveraged, dikkat'); cons++; }
+    else if (fr < -0.02) { lines.push('&#x1F7E2; Funding ' + fr + '% — shortlar sıkıştı, squeeze olabilir'); pros++; }
+  }
+
+  // Karar
+  var cls, vtext, desc;
+  if (sc >= 15 || pros >= cons + 2) {
+    cls = 'mantikli';
+    vtext = 'İşlem açmak mantıklı &#x2705;';
+    desc = 'Göstergelerin ' + pros + '/' + (pros+cons) + "u AL yönünde. Skor " + (sc > 0 ? '+' : '') + sc + '. Uygun giriş bölgesinde görünüyor, pozisyon açılabilir.';
+  } else if (sc <= -15 || cons >= pros + 2) {
+    cls = 'degil';
+    vtext = 'İşlem açmak mantıklı değil &#x274C;';
+    desc = 'Göstergelerin çoğu SAT sinyali veriyor. Skor ' + sc + '. Şu an beklemek ya da short düşünmek daha akıllıca olur.';
+  } else {
+    cls = 'dikkat';
+    vtext = 'Dikkatli ol — karışık sinyaller &#x26A0;&#xFE0F;';
+    desc = 'Göstergeler net bir yön vermiyor, skor ' + (sc > 0 ? '+' : '') + sc + '. Risk/ödül oranı düşük. Daha net sinyal beklemek mantıklı.';
+  }
+
+  card.className = 'yorum-card ' + cls;
+  verdict.innerHTML = vtext;
+  text.textContent = desc;
+  var html = '';
+  for (var j = 0; j < lines.length; j++) {
+    html += '<div class="yorum-item">' + lines[j] + '</div>';
+  }
+  items.innerHTML = html;
+}
+
 // ── Dashboard yükle ────────────────────────────────────────────────────────
 function loadDash() {
   document.getElementById('rbtn').classList.add('spin');
@@ -947,6 +1060,7 @@ function loadDash() {
       var ts = g.total_score;
       document.getElementById('sig-sc').textContent = (ts > 0 ? '+' : '') + ts;
       renderGauges(g.gauges);
+      renderYorum(g, res.price);
     }
 
     if (res.klines_1h && res.klines_1h.length) {
