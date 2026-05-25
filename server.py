@@ -899,7 +899,9 @@ if ('serviceWorker' in navigator) {
 }
 
 // ── INIT ──────────────────────────────────────────────────────────────────
-pollStatus();
+// Hemen hazır göster, arka planda kontrol et
+setStatus('ok', 'Hazır — soru sorabilirsiniz');
+setTimeout(pollStatus, 500);
 </script>
 </body>
 </html>"""
