@@ -293,8 +293,16 @@ def build_gauges(price_data, kl1h, kl4h, kl1d, fng, funding, glb):
     action = "AL" if total > 15 else ("SAT" if total < -15 else "BEKLE")
     color  = "buy" if action == "AL" else ("sell" if action == "SAT" else "hold")
 
-    return {"gauges": gauges, "total_score": total,
-            "action": action, "color": color}
+    # Gerçek volatilite: ATR % (ortalama saatlik hareket aralığı)
+    atr1h_val = atr(kl1h)
+    atr_pct = round(atr1h_val / price * 100, 3) if atr1h_val and price else 1.0
+    # Bollinger bant genişliği
+    bb_width_pct = round((bu - bl) / bm * 100, 2) if bu and bl and bm else 2.0
+    # 4-6 saatlik beklenen hareket tahmini (ATR × 2 + bant/8)
+    expected_pct = round(min(atr_pct * 2 + bb_width_pct / 8, 6.0), 2)
+
+    return {"gauges": gauges, "total_score": total, "action": action, "color": color,
+            "atr_pct": atr_pct, "expected_pct": expected_pct, "bb_width_pct": bb_width_pct}
 
 # ── API endpoints ─────────────────────────────────────────────────────────────
 @app.route("/api/status")
@@ -1061,36 +1069,47 @@ function renderYorum(g, price) {
     html += '<div class="yorum-item">' + lines[j] + '</div>';
   }
 
-  // ── Asgari ücret kazanç hesabı ─────────────────────────────────────────
-  var MIN_UCRET_AYLIK = 22104; // TL - 2026 Türkiye asgari ücret tahmini
-  var MIN_UCRET_GUNLUK = Math.round(MIN_UCRET_AYLIK / 22);
-  var btcTry = 0;
-  if (window._globalData) btcTry = window._globalData.btc_try || 0;
+  // ── Kirpi Hesabı: gerçek volatiliteye göre hedef bazlı ──────────────────
+  var btcTry = (window._globalData && window._globalData.btc_try) ? window._globalData.btc_try : 0;
+  var usdTry = (window._globalData && window._globalData.usd_try) ? window._globalData.usd_try : 38;
 
-  if (btcTry > 0 && sc !== 0) {
-    var absScore = Math.abs(sc);
-    // Beklenen hareket skora göre — SADECE sinyal yönünde
-    var expectedPct = absScore > 40 ? 3.5 : (absScore > 25 ? 2.5 : (absScore > 15 ? 1.5 : 0.8));
-    var yon = sc > 0 ? 'LONG' : 'SHORT';
-    var yon_fiil = sc > 0 ? 'yükselirse' : 'düşerse';
-    var yon_emoji = sc > 0 ? '&#x2191;' : '&#x2193;';
-    // Gerekli spot pozisyon
-    var gerekliTL = Math.round(MIN_UCRET_GUNLUK / (expectedPct / 100));
-    var gerekliUSD = curPrice > 0 ? Math.round(gerekliTL / (btcTry / curPrice)) : 0;
-    var tl_str = gerekliTL.toLocaleString('tr-TR') + ' &#8378;';
-    var usd_str = gerekliUSD > 0 ? ' (~' + gerekliUSD.toLocaleString('tr-TR') + ' $)' : '';
-    // Kaldıraçlı teminat (5x)
-    var lev_usd = gerekliUSD > 0 ? Math.round(gerekliUSD / 5) : 0;
+  if (btcTry > 0 && g.expected_pct) {
+    var expPct  = g.expected_pct;   // sunucudan gelen ATR bazlı gerçek beklenti
+    var yon     = sc > 0 ? 'LONG &#x2191;' : 'SHORT &#x2193;';
+    var yonKlr  = sc > 0 ? 'var(--buy)' : 'var(--sell)';
+    var fiil    = sc > 0 ? 'yükselirse' : 'düşerse';
 
-    html += '<div class="yorum-item" style="margin-top:8px;border-top:1px solid rgba(255,255,255,.07);padding-top:10px;line-height:1.7">';
-    html += '&#x1F994; <b>Kirpi Hesabı</b><br>';
-    html += 'Asgari ücretli günlük: <b>' + MIN_UCRET_GUNLUK.toLocaleString('tr-TR') + ' TL</b><br>';
-    html += 'Sinyal: <b>' + yon_emoji + ' ' + yon + '</b> — BTC bu seviyeden ~<b>%' + expectedPct + '</b> ' + yon_fiil + ' bekleniyor<br>';
-    html += 'Aynı kazanç için gereken spot pozisyon: <b>' + tl_str + usd_str + '</b>';
-    if (lev_usd > 0) {
-      html += '<br>5x kaldıraçla sadece <b>~' + lev_usd.toLocaleString('tr-TR') + ' $</b> teminat yeter';
-      html += ' <span style="color:var(--sell);font-size:11px">(⚠️ kaldıraç riski de 5x artar)</span>';
+    // 5 farklı hedef
+    var hedefler = [5000, 10000, 20000, 50000, 100000];
+
+    html += '<div style="margin-top:10px;border-top:1px solid rgba(255,255,255,.08);padding-top:12px">';
+    html += '<div style="font-size:12px;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:8px">';
+    html += '&#x1F994; Kirpi Hesabı &nbsp;';
+    html += '<span style="color:' + yonKlr + ';font-size:13px">' + yon + '</span>';
+    html += '<span style="color:var(--sub);font-weight:400;font-size:11px">&nbsp; BTC %' + expPct + ' ' + fiil + ' bekleniyor (ATR bazlı)</span>';
+    html += '</div>';
+
+    // Başlık satırı
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font-size:10px;color:var(--sub);padding:0 2px 4px;border-bottom:1px solid rgba(255,255,255,.05)">';
+    html += '<span>Hedef Kazanç</span><span style="text-align:center">Spot Pozisyon</span><span style="text-align:right">5x Kaldıraç</span>';
+    html += '</div>';
+
+    for (var h = 0; h < hedefler.length; h++) {
+      var hedef    = hedefler[h];
+      var spotTL   = Math.round(hedef / (expPct / 100));
+      var spotUSD  = Math.round(spotTL / usdTry);
+      var levUSD   = Math.round(spotUSD / 5);
+      var hedefStr = hedef >= 1000 ? (hedef/1000) + 'K' : hedef;
+      var rowBg    = h % 2 === 0 ? 'rgba(255,255,255,.02)' : 'transparent';
+
+      html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font-size:11px;padding:6px 2px;background:' + rowBg + ';border-radius:6px">';
+      html += '<span style="font-weight:700;color:' + yonKlr + '">' + hedefStr + ' &#8378;</span>';
+      html += '<span style="text-align:center">' + spotUSD.toLocaleString('tr-TR') + ' $</span>';
+      html += '<span style="text-align:right;color:var(--sub)">' + levUSD.toLocaleString('tr-TR') + ' $</span>';
+      html += '</div>';
     }
+
+    html += '<div style="font-size:10px;color:var(--sub);margin-top:8px">⚠️ Kaldıraç riski de 5x artar. Hesaplar ATR (%' + g.atr_pct + '/saat) baz alınarak yapılmıştır.</div>';
     html += '</div>';
   }
 
