@@ -282,7 +282,25 @@ def build_gauges(price_data, kl1h, kl4h, kl1d, fng, funding, glb):
 # ── API endpoints ─────────────────────────────────────────────────────────────
 @app.route("/api/status")
 def api_status():
-    return jsonify({"ok": True, "app": "btc-dashboard-v2"})
+    return jsonify({"ok": True, "app": "btc-dashboard-v3"})
+
+@app.route("/api/debug")
+def api_debug():
+    results = {}
+    tests = {
+        "cryptocompare_price": lambda: GET(CC + "/pricemultifull", {"fsyms":"BTC","tsyms":"USD"}, timeout=8),
+        "cryptocompare_klines": lambda: GET(f"{CC}/v2/histohour", {"fsym":"BTC","tsym":"USD","limit":5}, timeout=8),
+        "bybit_funding": lambda: GET("https://api.bybit.com/v5/market/tickers", {"category":"linear","symbol":"BTCUSDT"}, timeout=6),
+        "alternative_fng": lambda: GET("https://api.alternative.me/fng/?limit=1", timeout=5),
+        "coingecko_global": lambda: GET("https://api.coingecko.com/api/v3/global", timeout=6),
+    }
+    for name, fn in tests.items():
+        try:
+            fn()
+            results[name] = "OK"
+        except Exception as e:
+            results[name] = str(e)[:120]
+    return jsonify(results)
 
 @app.route("/api/price")
 def api_price():
@@ -312,7 +330,7 @@ def api_dashboard():
 
     price = results["price"]
     if not price:
-        return jsonify({"ok": False, "error": "Binance bağlantısı kurulamadı"}), 500
+        return jsonify({"ok": False, "error": "Fiyat verisi alınamadı — /api/debug kontrol et"}), 500
 
     kl1h = results["kl1h"] or []
     kl4h = results["kl4h"] or []
