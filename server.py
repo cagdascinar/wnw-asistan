@@ -436,17 +436,20 @@ def icon(size):
 @app.route("/sw.js")
 def sw():
     js = """
-const V='ww-v7';
-self.addEventListener('install',e=>{
-  e.waitUntil(caches.keys().then(ks=>Promise.all(ks.map(k=>caches.delete(k)))).then(()=>self.skipWaiting()));
+self.addEventListener('install', e => {
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.map(k => caches.delete(k)))).then(() => self.skipWaiting()));
 });
-self.addEventListener('activate',e=>e.waitUntil(clients.claim()));
-self.addEventListener('fetch',e=>{
-  if(new URL(e.request.url).pathname.startsWith('/api/')) return;
-  e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)));
+self.addEventListener('activate', e => e.waitUntil(clients.claim()));
+self.addEventListener('fetch', e => {
+  var url = new URL(e.request.url);
+  if (url.pathname.startsWith('/api/') || url.pathname === '/sw.js') return;
+  e.respondWith(
+    fetch(e.request, {cache: 'no-store'}).catch(() => new Response('Offline - lutfen internet baglantinizi kontrol edin', {status: 503}))
+  );
 });
 """
-    return Response(js, mimetype="application/javascript")
+    return Response(js, mimetype="application/javascript",
+                    headers={"Cache-Control": "no-store, no-cache"})
 
 @app.route("/")
 def index():
