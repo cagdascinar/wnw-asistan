@@ -407,10 +407,9 @@ self.addEventListener('fetch', e => e.respondWith(fetch(e.request).catch(() => c
 @app.route("/")
 def index():
     html = MOBILE_HTML
-    if ANTHROPIC_KEY:
-        # Sunucuda key var: setup ekranını gizle, chat'i göster
-        html = html.replace('id="setup"', 'id="setup" style="display:none!important"')
-        html = html.replace('id="chat-screen"', 'id="chat-screen" style="display:flex!important"')
+    # Artık AI key gerekmediğinden setup ekranını her zaman gizle
+    html = html.replace('id="setup"', 'id="setup" style="display:none!important"')
+    html = html.replace('id="chat-screen"', 'id="chat-screen" style="display:flex!important"')
     return html
 
 # ── HTML ───────────────────────────────────────────────────────────────────
@@ -632,20 +631,6 @@ async function init() {
 async function startChat() {
   const st = await checkStatus();
   if (!st) { toast('Sunucuya bağlanılamıyor'); return; }
-
-  if (st.server_key) {
-    if (st.password_required) {
-      const p = document.getElementById('pwInput').value.trim();
-      if (!p) { toast('Şifre girin'); return; }
-      password = p; localStorage.setItem('ww_pw', p);
-    }
-    showChat(st.boards); return;
-  }
-
-  const k = document.getElementById('apiKeyInput').value.trim();
-  if (!k) { toast('API key girin'); return; }
-  if (!k.startsWith('sk-ant')) { toast('Geçerli API key girin (sk-ant-...)'); return; }
-  apiKey = k; localStorage.setItem('ww_key', k);
 
   if (st.password_required) {
     const p = document.getElementById('pwInput').value.trim();
