@@ -586,7 +586,7 @@ canvas{border-radius:12px;background:var(--card);border:1px solid var(--brd);dis
 <body>
 
 <div class="hdr">
-  <div class="logo">&#8383;<span class="logo-btc">BTC</span> Analiz</div>
+  <div class="logo">&#x1F994;<span class="logo-btc">BTC</span> Analiz</div>
   <div class="hdr-r">
     <div class="dot" id="dot"></div>
     <span class="upd-t" id="updt">--</span>
