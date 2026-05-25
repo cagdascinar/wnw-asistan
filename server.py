@@ -8,8 +8,11 @@ executor = ThreadPoolExecutor(max_workers=8)
 _cache = {}
 _lock  = threading.Lock()
 
-# ── Açık pozisyonlar (in-memory, basit) ────────────────────────────────────
+# ── Açık pozisyonlar ───────────────────────────────────────────────────────
 _positions = {}   # session_id → {dir, entry, opened_at}
+
+# ── Son hesaplanan göstergeler (live endpoint için) ─────────────────────────
+_gauge_state = {"gauges": None, "fng": None, "global": None}
 
 def cached(key, ttl, fn):
     with _lock:
@@ -360,9 +363,14 @@ def api_dashboard():
             gauges = build_gauges(price, kl1h, kl4h, kl1d,
                                   results["fng"] or {"value":50,"label":"Neutral","delta":0},
                                   results["funding"] or {"rate":0.0,"mark":0},
-                                  results["global"] or {"btc_dom":0.0,"mcap_change":0.0})
-        except Exception as e:
+                                  results["global"] or {"btc_dom":0.0,"mcap_change":0.0,"btc_try":0,"usd_try":0})
+        except Exception:
             gauges = None
+
+    if gauges:
+        _gauge_state["gauges"] = gauges
+        _gauge_state["fng"]    = results["fng"]
+        _gauge_state["global"] = results["global"]
 
     return jsonify({
         "ok": True,
@@ -373,6 +381,25 @@ def api_dashboard():
         "global": results["global"],
         "klines_1h": (kl1h[-50:] if kl1h else []),
     })
+
+@app.route("/api/live")
+def api_live():
+    """5 saniyede bir çağrılır — fiyat + cached göstergeler, dış API çağrısı yok"""
+    try:
+        price = fetch_price()   # 10s cache, hızlı
+        fng   = fetch_fng()     # 1h cache
+        glb   = _gauge_state.get("global") or fetch_global()
+        gauges = _gauge_state.get("gauges")
+        # Fiyat değiştiyse gauge skorlarını fiyata göre güncelle (Bollinger hariç sabit)
+        return jsonify({
+            "ok": True,
+            "price": price,
+            "gauges": gauges,
+            "fng": fng,
+            "global": glb,
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/api/signal")
 def api_signal():
@@ -664,6 +691,19 @@ canvas{border-radius:12px;background:var(--card);border:1px solid var(--brd);dis
   </div>
 </div>
 
+<!-- Kirpi Yorumu (sinyalin hemen altında) -->
+<div class="sec">&#x1F994; KİRPİ YORUMU</div>
+<div class="yorum-wrap">
+  <div class="yorum-card dikkat" id="yorum-card">
+    <div class="yorum-header">
+      <span class="yorum-kirpi">&#x1F994;</span>
+      <span class="yorum-verdict" id="yorum-verdict">Analiz bekleniyor...</span>
+    </div>
+    <div class="yorum-text" id="yorum-text">Göstergeler yüklendikten sonra Kirpi yorumunu yapacak.</div>
+    <div class="yorum-items" id="yorum-items"></div>
+  </div>
+</div>
+
 <!-- Pozisyon Aç butonu -->
 <button class="open-pos-btn" onclick="showPosModal()">&#128200; Pozisyon Aç</button>
 
@@ -688,19 +728,6 @@ canvas{border-radius:12px;background:var(--card);border:1px solid var(--brd);dis
 <!-- Haberler -->
 <div class="sec">HABERLER</div>
 <div class="nwrap" id="nwrap"><div style="color:var(--sub);font-size:13px">Yükleniyor...</div></div>
-
-<!-- Kirpi Yorum -->
-<div class="sec">&#x1F994; KİRPİ YORUMU</div>
-<div class="yorum-wrap">
-  <div class="yorum-card dikkat" id="yorum-card">
-    <div class="yorum-header">
-      <span class="yorum-kirpi">&#x1F994;</span>
-      <span class="yorum-verdict" id="yorum-verdict">Analiz bekleniyor...</span>
-    </div>
-    <div class="yorum-text" id="yorum-text">Göstergeler yüklendikten sonra Kirpi yorumunu yapacak.</div>
-    <div class="yorum-items" id="yorum-items"></div>
-  </div>
-</div>
 
 <div class="footer">CryptoCompare &bull; CoinGecko &bull; Alternative.me &bull; OKX &bull; Yatırım tavsiyesi değildir</div>
 
@@ -1254,9 +1281,40 @@ function priceTick() {
   _tickerXhr.send();
 }
 
+// ── Live tick: sinyal + yorum her 5 saniyede (cached verilerle, dış API yok) ─
+var _liveXhr = null;
+function liveTick() {
+  if (_liveXhr) return;
+  _liveXhr = new XMLHttpRequest();
+  _liveXhr.open('GET', '/api/live', true);
+  _liveXhr.timeout = 6000;
+  _liveXhr.onreadystatechange = function() {
+    if (_liveXhr.readyState !== 4) return;
+    var xhr = _liveXhr; _liveXhr = null;
+    if (xhr.status !== 200) return;
+    var res; try { res = JSON.parse(xhr.responseText); } catch(e) { return; }
+    if (!res.ok) return;
+    if (res.global) window._globalData = res.global;
+    // Sinyal güncelle
+    if (res.gauges) {
+      var g = res.gauges;
+      var sig = document.getElementById('sig');
+      sig.className = 'sig ' + g.color;
+      document.getElementById('sig-a').textContent = g.action;
+      var ts = g.total_score;
+      document.getElementById('sig-sc').textContent = (ts > 0 ? '+' : '') + ts;
+      // Yorum güncelle (fiyat da fresh geldi)
+      if (res.price) { curPrice = res.price.price; }
+      renderYorum(g, res.price);
+    }
+  };
+  _liveXhr.send();
+}
+
 loadAll();
-setInterval(priceTick, 1500);   // fiyat: her 1.5sn
-setInterval(loadAll, 60000);    // göstergeler: her 60sn
+setInterval(priceTick, 1500);    // fiyat: her 1.5sn
+setInterval(liveTick,  5000);    // sinyal + yorum: her 5sn (cache'den)
+setInterval(loadAll,   120000);  // tam göstergeler: her 2dk
 </script>
 </body>
 </html>"""
