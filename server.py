@@ -122,8 +122,12 @@ GRAMMAR = {
 
 def score_board(bn, words, qnrm):
     bnn = nrm(bn)
-    if bnn == qnrm: return 10000
-    if qnrm and len(qnrm) > 2 and qnrm in bnn: return 5000 + max(0, 100 - len(bn))
+    # Subitems panolarına büyük ceza ver — ana panoları tercih et
+    is_sub = "panosunun alt" in bnn or "alt ogeleri" in bnn
+    if bnn == qnrm: return 1 if is_sub else 10000
+    if qnrm and len(qnrm) > 2 and qnrm in bnn:
+        base = 5000 + max(0, 100 - len(bn))
+        return base // 20 if is_sub else base
     score = 0
     for w in words:
         wn = nrm(w)
@@ -132,7 +136,7 @@ def score_board(bn, words, qnrm):
             score += 20 * len(wn)
             if re.search(r"(^| )" + re.escape(wn) + r"( |$)", bnn):
                 score += 10 * len(wn)
-    return score
+    return score // 10 if is_sub else score
 
 def find_board(query):
     q = nrm(query.strip())
@@ -188,14 +192,21 @@ def parse_intent(text):
 
     list_kw = ["hangi pano","pano listesi","tum pano","tüm pano","panolar var",
                "panolar neler","mevcut pano","pano goster","pano göster","panolari goster"]
-    if any(nrm(k) in tn for k in list_kw):
+    matched_lkw = next((nrm(k) for k in list_kw if nrm(k) in tn), None)
+    if matched_lkw:
         search = ""
-        for kw in ["iceren","içeren","baslayan","başlayan"]:
+        # Önce "içeren/başlayan" sonrasına bak
+        for kw in ["iceren","icinde","içeren","baslayan","başlayan"]:
             if kw in tn:
                 idx = tn.index(kw) + len(kw)
                 rest = t[idx:].strip()
                 if rest: search = rest.split()[0]
                 break
+        # Yoksa list keyword'ünden sonraki anlamlı kelimeleri al
+        if not search:
+            idx = tn.index(matched_lkw) + len(matched_lkw)
+            rest_words = [w for w in re.split(r"\W+", tn[idx:]) if w and w not in GRAMMAR and len(w) > 1]
+            search = " ".join(rest_words[:3])
         return {"intent": "list", "search": search}
 
     # Yıl
@@ -270,11 +281,18 @@ def do_query(board_name, year=None, month=None, metric="sum"):
         for c in binfo["columns"]:
             if c["type"] == "date": date_col = c; break
 
-    num_kw   = ["tutar","matrah","toplam","fiyat","bedel","miktar","ucret","ücret","maliyet","gelir","gider"]
+    num_kw   = ["tutar","matrah","toplam","fiyat","bedel","miktar","ucret","ücret","maliyet","gelir","gider","net","kdv","stopaj"]
+    NUMERIC_TYPES = ("numbers", "formula", "numeric")
+    # Önce ada göre eşleşen sayısal sütunlar
     num_cols = [c for c in binfo["columns"]
-                if c["type"] == "numbers" and any(k in nrm(c["title"]) for k in num_kw)]
+                if c["type"] in NUMERIC_TYPES and any(k in nrm(c["title"]) for k in num_kw)]
+    # Yoksa tüm sayısal sütunlar
     if not num_cols:
-        num_cols = [c for c in binfo["columns"] if c["type"] == "numbers"]
+        num_cols = [c for c in binfo["columns"] if c["type"] in NUMERIC_TYPES]
+    # Hâlâ yoksa metin sütunlarını da dene (adına göre eşleşiyorsa)
+    if not num_cols:
+        num_cols = [c for c in binfo["columns"]
+                    if c["type"] == "text" and any(k in nrm(c["title"]) for k in num_kw)]
 
     filtered, skipped = [], 0
     for item in items:
@@ -498,6 +516,23 @@ def status():
         "server_key":        False,
         "password_required": bool(APP_PASSWORD),
     })
+
+@app.route("/api/search")
+def api_search():
+    q = request.args.get("q", "").strip()
+    if not q:
+        return jsonify({"error": "?q= parametresi gerekli"})
+    qn = nrm(q)
+    words = [w for w in re.split(r"\W+", qn) if w and len(w) > 1]
+    results = []
+    for bid, b in boards_cache.items():
+        s = score_board(b["name"], words, qn)
+        if s > 0:
+            results.append({"score": s, "id": bid, "name": b["name"],
+                            "cols": [{"id":c["id"],"title":c["title"],"type":c["type"]}
+                                     for c in b["columns"]]})
+    results.sort(key=lambda x: -x["score"])
+    return jsonify({"query": q, "found": len(results), "boards": results[:20]})
 
 @app.route("/api/chat", methods=["POST"])
 def chat():
