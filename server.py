@@ -713,17 +713,20 @@ function pollStatus() {
   xhrGet(BASE + '/api/status', function(err, d) {
     if (err) {
       _pollCount++;
-      setStatus('err', 'Bağlanamıyor (' + _pollCount + ')');
-      if (_pollCount < 10) setTimeout(pollStatus, 4000);
-      else setStatus('err', '⚠️ Sunucuya ulaşılamıyor');
+      if (_pollCount < 15) {
+        setStatus('warn', 'Bağlanıyor... (' + _pollCount + ')');
+        setTimeout(pollStatus, 3000);
+      } else {
+        setStatus('err', '⚠️ Sunucuya ulaşılamıyor — sayfayı yenileyin');
+      }
       return;
     }
     _pollCount = 0;
     if (d.boards > 0) {
       setStatus('ok', d.boards + ' pano yüklü ✓');
     } else {
-      setStatus('warn', d.loading ? 'Panolar yükleniyor...' : 'Bağlandı, panolar bekleniyor...');
-      setTimeout(pollStatus, 6000);
+      setStatus('warn', d.loading ? 'Panolar yükleniyor...' : 'Bağlandı...');
+      setTimeout(pollStatus, 4000);
     }
   });
 }
