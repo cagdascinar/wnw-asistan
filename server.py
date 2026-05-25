@@ -1109,19 +1109,13 @@ function loadDash() {
     document.getElementById('dot').className = 'dot';
     document.getElementById('updt').textContent = nowT();
 
-    var p = res.price;
-    curPrice = p.price;
-    document.getElementById('hp').textContent = fP(p.price);
-    var ce = document.getElementById('hc');
-    ce.textContent = (p.change >= 0 ? '+' : '') + p.change.toFixed(2) + '%';
-    ce.className = 'hero-c ' + (p.change >= 0 ? 'up' : 'dn');
-    document.getElementById('hh').textContent = fP(p.high);
-    document.getElementById('hl').textContent = fP(p.low);
-    document.getElementById('hv').textContent = fM(p.vol_usdt);
-    document.getElementById('hdom').textContent = (res.global ? res.global.btc_dom.toFixed(1) : '--') + '%';
     if (res.global) window._globalData = res.global;
+    document.getElementById('hdom').textContent = (res.global ? res.global.btc_dom.toFixed(1) : '--') + '%';
+
+    applyPrice(res.price);  // fiyat + yorum birlikte
 
     if (res.gauges) {
+      _cachedGauges = res.gauges;
       var g = res.gauges;
       var sig = document.getElementById('sig');
       sig.className = 'sig ' + g.color;
@@ -1245,38 +1239,42 @@ startPosTimer();
 // ── Canlı fiyat ticker (1.5 saniyede bir) ─────────────────────────────────
 var _lastPrice = 0;
 var _tickerXhr = null;
+var _cachedGauges = null;   // son hesaplanan göstergeler (tüm tickler için ortak)
+
+function applyPrice(p) {
+  var priceEl = document.getElementById('hp');
+  var prev = _lastPrice;
+  _lastPrice = p.price;
+  if (prev > 0 && p.price !== prev) {
+    priceEl.classList.remove('flash-up','flash-dn');
+    void priceEl.offsetWidth;
+    priceEl.classList.add(p.price > prev ? 'flash-up' : 'flash-dn');
+  }
+  document.getElementById('hp').textContent = fP(p.price);
+  var ce = document.getElementById('hc');
+  ce.textContent = (p.change >= 0 ? '+' : '') + p.change.toFixed(2) + '%';
+  ce.className = 'hero-c ' + (p.change >= 0 ? 'up' : 'dn');
+  document.getElementById('hh').textContent = fP(p.high);
+  document.getElementById('hl').textContent = fP(p.low);
+  document.getElementById('hv').textContent = fM(p.vol_usdt);
+  document.getElementById('updt').textContent = nowT();
+  curPrice = p.price;
+  // Fiyat değişince yorumu da güncelle (cached göstergelerle, hızlı)
+  if (_cachedGauges) renderYorum(_cachedGauges, p);
+}
 
 function priceTick() {
-  if (_tickerXhr) return; // önceki istek bitmeden yeni gönderme
+  if (_tickerXhr) return;
   _tickerXhr = new XMLHttpRequest();
   _tickerXhr.open('GET', '/api/price', true);
   _tickerXhr.timeout = 4000;
   _tickerXhr.onreadystatechange = function() {
     if (_tickerXhr.readyState !== 4) return;
-    var xhr = _tickerXhr;
-    _tickerXhr = null;
+    var xhr = _tickerXhr; _tickerXhr = null;
     if (xhr.status !== 200) return;
     var res; try { res = JSON.parse(xhr.responseText); } catch(e) { return; }
     if (!res.ok || !res.data) return;
-    var p = res.data;
-    var priceEl = document.getElementById('hp');
-    var prev = _lastPrice;
-    _lastPrice = p.price;
-    // Flaş animasyonu
-    if (prev > 0 && p.price !== prev) {
-      priceEl.classList.remove('flash-up','flash-dn');
-      void priceEl.offsetWidth; // reflow
-      priceEl.classList.add(p.price > prev ? 'flash-up' : 'flash-dn');
-    }
-    document.getElementById('hp').textContent = fP(p.price);
-    var ce = document.getElementById('hc');
-    ce.textContent = (p.change >= 0 ? '+' : '') + p.change.toFixed(2) + '%';
-    ce.className = 'hero-c ' + (p.change >= 0 ? 'up' : 'dn');
-    document.getElementById('hh').textContent = fP(p.high);
-    document.getElementById('hl').textContent = fP(p.low);
-    document.getElementById('hv').textContent = fM(p.vol_usdt);
-    document.getElementById('updt').textContent = nowT();
-    curPrice = p.price;
+    applyPrice(res.data);
   };
   _tickerXhr.send();
 }
@@ -1295,17 +1293,16 @@ function liveTick() {
     var res; try { res = JSON.parse(xhr.responseText); } catch(e) { return; }
     if (!res.ok) return;
     if (res.global) window._globalData = res.global;
-    // Sinyal güncelle
     if (res.gauges) {
+      _cachedGauges = res.gauges;
       var g = res.gauges;
       var sig = document.getElementById('sig');
       sig.className = 'sig ' + g.color;
       document.getElementById('sig-a').textContent = g.action;
       var ts = g.total_score;
       document.getElementById('sig-sc').textContent = (ts > 0 ? '+' : '') + ts;
-      // Yorum güncelle (fiyat da fresh geldi)
-      if (res.price) { curPrice = res.price.price; }
-      renderYorum(g, res.price);
+      if (res.price) applyPrice(res.price);
+      else if (_cachedGauges) renderYorum(_cachedGauges, {price: curPrice, change: 0});
     }
   };
   _liveXhr.send();
