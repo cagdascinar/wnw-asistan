@@ -236,11 +236,33 @@ def parse_intent(text):
     metric = "count" if (any(nrm(k) in tn for k in count_kw) or
                          (re.search(r"\bkac\b", tn) and "tutar" not in tn and "toplam" not in tn)) else "sum"
 
-    # Pano bul — yıl, ay, dilbilgisi kelimelerini çıkar
+    # Pano bul — "X panosunda Y" kalıbı varsa X'i doğrudan al
+    PANO_SUFFIXES = ["panosunda","panosundaki","panonun","panosundan","formunda",
+                     "formundaki","tabloda","tablodaki","listesinde","listesindeki",
+                     "projesinde","projesindeki","panosunu","panosunun"]
+    board_hint = None
+    for sfx in PANO_SUFFIXES:
+        if sfx in tn:
+            idx = tn.index(sfx)
+            hint = tn[:idx].strip()
+            # Yıl ve ay isimlerini temizle
+            hint = re.sub(r"\b20\d{2}\b", " ", hint)
+            for mn in sorted(MONTHS_ALL.keys(), key=len, reverse=True):
+                hint = re.sub(r"\b" + re.escape(nrm(mn)) + r"\b", " ", hint)
+            hint = hint.strip()
+            if hint:
+                board_hint = hint
+            break
+
     clean = re.sub(r"\b20\d{2}\b", " ", tn)
     for mn in sorted(MONTHS_ALL.keys(), key=len, reverse=True):
         clean = re.sub(r"\b" + re.escape(nrm(mn)) + r"\b", " ", clean)
-    words = [w for w in re.split(r"\W+", clean) if w and w not in GRAMMAR and len(w) > 1]
+
+    if board_hint:
+        # Pano adını doğrudan "panosunda" öncesi kısımdan al
+        words = [w for w in re.split(r"\W+", board_hint) if w and len(w) > 1]
+    else:
+        words = [w for w in re.split(r"\W+", clean) if w and w not in GRAMMAR and len(w) > 1]
 
     board_id = board_name = None
     if words:
@@ -283,9 +305,13 @@ def do_query(board_name, year=None, month=None, metric="sum"):
 
     num_kw   = ["tutar","matrah","toplam","fiyat","bedel","miktar","ucret","ücret","maliyet","gelir","gider","net","kdv","stopaj"]
     NUMERIC_TYPES = ("numbers", "formula", "numeric")
+    NUMERIC_TYPES = ("numbers", "formula", "numeric")
     # Önce ada göre eşleşen sayısal sütunlar
-    num_cols = [c for c in binfo["columns"]
-                if c["type"] in NUMERIC_TYPES and any(k in nrm(c["title"]) for k in num_kw)]
+    kw_cols = [c for c in binfo["columns"]
+               if c["type"] in NUMERIC_TYPES and any(k in nrm(c["title"]) for k in num_kw)]
+    # "Toplam X" sütunları varsa bireysel KDV breakdown'larına öncelik ver
+    toplam_cols = [c for c in kw_cols if nrm(c["title"]).startswith("toplam")]
+    num_cols = toplam_cols if toplam_cols else kw_cols
     # Yoksa tüm sayısal sütunlar
     if not num_cols:
         num_cols = [c for c in binfo["columns"] if c["type"] in NUMERIC_TYPES]
