@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, json, re, base64
+import os, json, re, base64, threading
 from datetime import datetime
 from flask import Flask, request, jsonify, Response
 import requests
@@ -602,30 +602,38 @@ if (isIOS && !isStandalone) {
   document.getElementById('installBanner').classList.add('show');
 }
 
-// Check server status — retry 3x for Railway cold start
+// Timeout destekli fetch (AbortSignal.timeout iOS'ta çalışmıyor)
+async function fetchT(url, opts, ms) {
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), ms || 10000);
+  try {
+    const r = await fetch(url, Object.assign({}, opts, {signal: ctrl.signal}));
+    clearTimeout(tid); return r;
+  } catch(e) { clearTimeout(tid); throw e; }
+}
+
+// Sunucu durumu — Railway soğuk başlangıç için 5 deneme
 async function checkStatus() {
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 5; i++) {
     try {
-      const r = await fetch(BASE + '/api/status');
+      const r = await fetchT(BASE + '/api/status', {}, 10000);
       const d = await r.json();
       serverKey  = d.server_key;
       pwRequired = d.password_required;
       return d;
-    } catch { await new Promise(res => setTimeout(res, 2000)); }
+    } catch { if (i < 4) await new Promise(res => setTimeout(res, 3000)); }
   }
   return null;
 }
 
 async function init() {
-  document.getElementById('boardCount').textContent = 'Bağlanıyor...';
+  const bc = document.getElementById('boardCount');
+  bc.textContent = 'Bağlanıyor...';
   const st = await checkStatus();
-  if (!st) {
-    document.getElementById('boardCount').textContent = '⚠️ Sunucuya ulaşılamıyor';
-    return;
-  }
-  document.getElementById('boardCount').textContent = st.boards + ' pano yüklü ✓';
-  serverKey  = st.server_key;
-  pwRequired = st.password_required;
+  if (!st) { bc.textContent = '⚠️ Sunucuya bağlanılamıyor'; return; }
+  bc.textContent = st.boards
+    ? st.boards + ' pano yüklü ✓'
+    : '⏳ Panolar yükleniyor...';
 }
 
 async function startChat() {
@@ -664,7 +672,12 @@ function clearChat() {
 }
 
 // ── SEND ──────────────────────────────────────────────────────────────────
-function sendSug(el) { document.getElementById('msgInput').value = el.textContent; sendMessage(); }
+function sendSug(el) {
+  const inp = document.getElementById('msgInput');
+  inp.value = el.textContent.trim();
+  autoResize(inp);
+  inp.focus();
+}
 function handleKey(e) { if (e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();} }
 function autoResize(el) { el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,100)+'px'; }
 
@@ -686,11 +699,11 @@ async function sendMessage() {
   document.getElementById('sendBtn').disabled = true;
 
   try {
-    const r = await fetch(BASE + '/api/chat', {
+    const r = await fetchT(BASE + '/api/chat', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({api_key:apiKey, password:password, messages:[...messages]})
-    });
+    }, 45000);
     const data = await r.json();
     removeTyping(tid);
     if (data.error) {
@@ -768,7 +781,6 @@ init();
 </html>"""
 
 # Gunicorn veya direkt çalıştırmada panoları yükle
-import threading
 def _load():
     print("Monday.com panoları yükleniyor...")
     count = load_all_boards()
