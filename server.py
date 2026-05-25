@@ -1064,25 +1064,32 @@ function renderYorum(g, price) {
   // ── Asgari ücret kazanç hesabı ─────────────────────────────────────────
   var MIN_UCRET_AYLIK = 22104; // TL - 2026 Türkiye asgari ücret tahmini
   var MIN_UCRET_GUNLUK = Math.round(MIN_UCRET_AYLIK / 22);
-  var btcTry = (price && price._btc_try) ? price._btc_try : 0;
-  if (!btcTry && window._globalData) btcTry = window._globalData.btc_try || 0;
+  var btcTry = 0;
+  if (window._globalData) btcTry = window._globalData.btc_try || 0;
 
-  if (btcTry > 0) {
-    // Beklenen hareket: skora göre tahmin
+  if (btcTry > 0 && sc !== 0) {
     var absScore = Math.abs(sc);
+    // Beklenen hareket skora göre — SADECE sinyal yönünde
     var expectedPct = absScore > 40 ? 3.5 : (absScore > 25 ? 2.5 : (absScore > 15 ? 1.5 : 0.8));
-    // Gerekli pozisyon: hedef_kazanç / beklenen_%
+    var yon = sc > 0 ? 'LONG' : 'SHORT';
+    var yon_fiil = sc > 0 ? 'yükselirse' : 'düşerse';
+    var yon_emoji = sc > 0 ? '&#x2191;' : '&#x2193;';
+    // Gerekli spot pozisyon
     var gerekliTL = Math.round(MIN_UCRET_GUNLUK / (expectedPct / 100));
-    var gerekliUSD = Math.round(gerekliTL / (btcTry / curPrice));
-    var gerekliStr = gerekliTL.toLocaleString('tr-TR') + ' &#8378;';
-    if (gerekliUSD > 0) gerekliStr += ' (~' + gerekliUSD.toLocaleString('tr-TR') + ' $)';
+    var gerekliUSD = curPrice > 0 ? Math.round(gerekliTL / (btcTry / curPrice)) : 0;
+    var tl_str = gerekliTL.toLocaleString('tr-TR') + ' &#8378;';
+    var usd_str = gerekliUSD > 0 ? ' (~' + gerekliUSD.toLocaleString('tr-TR') + ' $)' : '';
+    // Kaldıraçlı teminat (5x)
+    var lev_usd = gerekliUSD > 0 ? Math.round(gerekliUSD / 5) : 0;
 
-    html += '<div class="yorum-item" style="margin-top:6px;border-top:1px solid rgba(255,255,255,.06);padding-top:8px">';
-    html += '&#x1F994; <b>Kirpi Hesabı:</b> Bugün asgari ücretli bir çalışan <b>' + MIN_UCRET_GUNLUK.toLocaleString('tr-TR') + ' TL</b> kazanıyor. ';
-    html += 'Şu anki sinyale göre BTC <b>~%' + expectedPct + '</b> hareket bekleniyor. ';
-    html += 'Bu hareketten aynı kazancı elde etmek için yaklaşık <b>' + gerekliStr + '</b> büyüklüğünde pozisyon gerekiyor.';
-    if (gerekliUSD > 5000) {
-      html += ' Kaldıraç kullanılırsa (örn. 5x) teminat olarak <b>~' + Math.round(gerekliUSD/5).toLocaleString('tr-TR') + ' $</b> yeter — ama kaldıraç riski de katlar.';
+    html += '<div class="yorum-item" style="margin-top:8px;border-top:1px solid rgba(255,255,255,.07);padding-top:10px;line-height:1.7">';
+    html += '&#x1F994; <b>Kirpi Hesabı</b><br>';
+    html += 'Asgari ücretli günlük: <b>' + MIN_UCRET_GUNLUK.toLocaleString('tr-TR') + ' TL</b><br>';
+    html += 'Sinyal: <b>' + yon_emoji + ' ' + yon + '</b> — BTC bu seviyeden ~<b>%' + expectedPct + '</b> ' + yon_fiil + ' bekleniyor<br>';
+    html += 'Aynı kazanç için gereken spot pozisyon: <b>' + tl_str + usd_str + '</b>';
+    if (lev_usd > 0) {
+      html += '<br>5x kaldıraçla sadece <b>~' + lev_usd.toLocaleString('tr-TR') + ' $</b> teminat yeter';
+      html += ' <span style="color:var(--sell);font-size:11px">(⚠️ kaldıraç riski de 5x artar)</span>';
     }
     html += '</div>';
   }
