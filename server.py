@@ -39,7 +39,10 @@ def fetch_price():
     return cached("price", 10, _price)
 
 def _price():
+    # CryptoCompare pricemultifull - rate limitlenince "Message" key döner
     d = GET(CC + "/pricemultifull", {"fsyms": "BTC", "tsyms": "USD"})
+    if "RAW" not in d:
+        raise Exception(f"CC hata: {d.get('Message','?')}")
     r = d["RAW"]["BTC"]["USD"]
     return {
         "price":    float(r["PRICE"]),
@@ -79,13 +82,14 @@ def fetch_funding():
     return cached("funding", 300, _funding)
 
 def _funding():
+    # OKX funding rate - Railway'den erişilebilir
     try:
-        d = GET("https://api.bybit.com/v5/market/tickers",
-                {"category": "linear", "symbol": "BTCUSDT"}, timeout=5)
-        r = d["result"]["list"][0]
+        d = GET("https://www.okx.com/api/v5/public/funding-rate",
+                {"instId": "BTC-USDT-SWAP"}, timeout=6)
+        r = d["data"][0]
         return {
             "rate": round(float(r.get("fundingRate", 0)) * 100, 4),
-            "mark": float(r.get("markPrice", 0)),
+            "mark": 0,
         }
     except Exception:
         return {"rate": 0.0, "mark": 0}
@@ -304,8 +308,12 @@ def api_debug():
 
 @app.route("/api/price")
 def api_price():
+    # cached() hataları yutar, doğrudan çağır
     try:
-        return jsonify({"ok": True, "data": fetch_price()})
+        data = _price()
+        with _lock:
+            _cache["price"] = {"ts": time.time(), "data": data}
+        return jsonify({"ok": True, "data": data})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
