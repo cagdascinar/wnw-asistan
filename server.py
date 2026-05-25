@@ -183,86 +183,183 @@ def tool_get_columns(board_name):
     return {"board_name":b["name"],"columns":[{"id":c["id"],"title":c["title"],"type":c["type"]}
             for c in b["columns"] if c["type"] not in skip]}
 
-TOOLS = [
-    {"name":"list_boards","description":"Monday.com'daki panoları listeler. Hangi panonun var olduğunu anlamak için kullan.",
-     "input_schema":{"type":"object","properties":{"query":{"type":"string","description":"İsteğe bağlı filtre"}}}},
-    {"name":"query_board","description":"Bir panodan veri sorgular: tutarlar, sayılar, tarih/grup filtresi.",
-     "input_schema":{"type":"object","required":["board_name"],"properties":{
-         "board_name":{"type":"string"},"year":{"type":"integer"},"month":{"type":"integer"},
-         "group_name":{"type":"string"},"metric":{"type":"string","enum":["sum","count"]}}}},
-    {"name":"get_board_groups","description":"Panonun gruplarını listeler.",
-     "input_schema":{"type":"object","required":["board_name"],"properties":{"board_name":{"type":"string"}}}},
-    {"name":"get_board_columns","description":"Panonun sütun yapısını döndürür.",
-     "input_schema":{"type":"object","required":["board_name"],"properties":{"board_name":{"type":"string"}}}},
-]
+# ── TÜRKÇE SORGU MOTORU (AI gerektirmez) ────────────────────────────────────
 
-SYSTEM = """Sen WorknWerk yaratıcı ajansının akıllı finans asistanısın. Monday.com verilerine erişerek Türkçe soruları yanıtlıyorsun.
+MONTHS_TR = {
+    'ocak':1,'şubat':2,'mart':3,'nisan':4,'mayıs':5,'haziran':6,
+    'temmuz':7,'ağustos':8,'eylül':9,'ekim':10,'kasım':11,'aralık':12,
+    'january':1,'february':2,'march':3,'april':4,'may':5,'june':6,
+    'july':7,'august':8,'september':9,'october':10,'november':11,'december':12
+}
 
-KURALLAR:
-- Cevapları her zaman Türkçe ver
-- Para birimini ₺ ile göster, binlik ayraç kullan (125.430 ₺)
-- Hangi panodan veri çektiğini belirt
-- Belirsiz sorularda önce list_boards ile panoları bul
+STOP_WORDS = {
+    'ne','kadar','var','nedir','göster','listele','söyle','bul','ver',
+    'pano','panosunda','panosundaki','projesinde','projesindeki','formunda',
+    'ayında','ayindaki','ayı','yılında','yilinda','tarihinde',
+    'toplam','tutar','matrah','gider','gelir','masraf','fatura','kayıt',
+    'kaç','adet','sayı','tane','miktar','ne','kadar','olan',
+    'bu','şu','bir','de','da','te','ta','ve','ile','için','mı','mi','mu','mü',
+    'hangi','olan','ait','ilgili','içinde','içindeki',
+}
 
-ŞİRKET BAĞLAMI (WorknWerk):
-- E-Faturalar = müşterilere kesilen faturalar → GELİR
-- E-Arşiv Faturalar = tedarikçiden gelen faturalar → GİDER
-- Masraf & Masraf Giriş Formu = personel masrafları → GİDER
-- Genel Giderler = işletme giderleri → GİDER
-- Karlılık = Gelir Matrahı - Gider Matrahı"""
+def parse_intent(text):
+    """Türkçe sorguyu analiz et."""
+    t = text.lower().strip()
+    now = datetime.now()
+
+    # Yıl
+    year = None
+    m = re.search(r'\b(202[0-9])\b', t)
+    if m: year = int(m.group(1))
+    if 'bu yıl' in t or 'bu yil' in t: year = year or now.year
+    if 'geçen yıl' in t or 'gecen yil' in t: year = (year or now.year) - 1
+
+    # Ay
+    month = None
+    for name, num in MONTHS_TR.items():
+        if name in t: month = num; break
+    if 'bu ay' in t: month = month or now.month; year = year or now.year
+    if 'geçen ay' in t or 'gecen ay' in t:
+        d = now.replace(day=1) - __import__('datetime').timedelta(days=1)
+        month = month or d.month; year = year or d.year
+
+    # Metrik
+    count_kw = ['kaç','adet','sayı','tane','kayıt sayısı','adet var','tane var']
+    metric = 'count' if any(k in t for k in count_kw) else 'sum'
+
+    # Pano listesi mi?
+    list_kw = ['hangi panolar','pano listesi','panolar neler','mevcut panolar','listele']
+    if any(k in t for k in list_kw):
+        return {'intent':'list', 'query': t}
+
+    # Pano adı: en uzun eşleşen pano adını bul
+    board_id, board_info = None, None
+    best_score = 0
+
+    # Metni temizle: stopwords, ay isimleri, yılları çıkar
+    clean = re.sub(r'\b202[0-9]\b', '', t)
+    for mn in MONTHS_TR: clean = clean.replace(mn, '')
+    clean_words = [w for w in re.split(r'\W+', clean) if w and w not in STOP_WORDS and len(w) > 1]
+
+    for bid, b in boards_cache.items():
+        bn = b['name'].lower()
+        score = sum(1 for w in clean_words if w in bn)
+        # Bonus: tam kelime eşleşmesi
+        if score > 0:
+            score += sum(0.5 for w in clean_words if len(w) > 3 and w in bn)
+        if score > best_score:
+            best_score = score
+            board_id, board_info = bid, b
+
+    if not board_id or best_score == 0:
+        # Son çare: tüm metni dene
+        found = find_board(' '.join(clean_words))
+        if found: board_id, board_info = found
+
+    return {
+        'intent': 'query',
+        'board_id': board_id,
+        'board_name': board_info['name'] if board_info else None,
+        'year': year, 'month': month, 'metric': metric,
+    }
+
+def format_money(n):
+    if n == 0: return "0 ₺"
+    return f"{n:,.0f} ₺".replace(",",".")
+
+def handle_query(text):
+    """Sorguyu işle ve Türkçe cevap üret."""
+    intent = parse_intent(text)
+
+    if intent['intent'] == 'list':
+        query = intent.get('query','')
+        # Arama terimi varsa filtrele
+        kw = ' '.join(w for w in re.split(r'\W+', query)
+                      if w and w not in STOP_WORDS and len(w) > 2
+                      and w not in MONTHS_TR)
+        boards = tool_list_boards(kw)
+        if not boards: return "Eşleşen pano bulunamadı."
+        names = '\n'.join(f"• {b['name']}" for b in boards[:20])
+        return f"**Mevcut panolar ({len(boards)} adet):**\n{names}"
+
+    if not intent['board_id']:
+        # Pano bulunamadıysa en yakın 5 tanesini öner
+        sample = list(boards_cache.values())[:5]
+        examples = ', '.join(f'"{b["name"][:30]}"' for b in sample)
+        return (f"Pano bulunamadı. Lütfen pano adını daha net belirtin.\n\n"
+                f"Örnek panolar: {examples}\n\n"
+                f"Tüm panoları görmek için: **\"Hangi panolar var?\"** yazın.")
+
+    result = tool_query_board(
+        intent['board_name'],
+        year=intent['year'],
+        month=intent['month'],
+        metric=intent['metric']
+    )
+
+    if 'error' in result:
+        return f"Hata: {result['error']}"
+
+    # Cevap oluştur
+    period = result['period'] or 'Tüm zamanlar'
+    board  = result['board_name']
+    n      = result['total_items']
+
+    if intent['metric'] == 'count':
+        return (f"**{board}** panosunda\n"
+                f"📅 Dönem: {period}\n"
+                f"📊 Toplam **{n} kayıt** bulundu.")
+
+    amounts = result.get('amounts', {})
+    grand   = result.get('grand_total', 0)
+
+    if not amounts:
+        return (f"**{board}** panosunda\n"
+                f"📅 Dönem: {period}\n"
+                f"📋 {n} kayıt bulundu ancak sayısal veri yok.")
+
+    lines = [f"**{board}**", f"📅 Dönem: {period}", f"📋 {n} kayıt", ""]
+    for col, val in amounts.items():
+        lines.append(f"• {col}: **{format_money(val)}**")
+    if len(amounts) > 1:
+        lines.append(f"\n💰 **Toplam: {format_money(grand)}**")
+
+    if result.get('sample_items'):
+        lines.append("\nÖrnek kayıtlar:")
+        for s in result['sample_items'][:3]:
+            lines.append(f"  – {s['name'][:50]}")
+
+    return '\n'.join(lines)
 
 # ── ROUTES ──────────────────────────────────────────────────────────────────
 @app.route("/api/chat", methods=["POST"])
 def chat():
-    body      = request.json
-    password  = body.get("password","")
-    user_key  = body.get("api_key","")
-    messages  = body.get("messages",[])
+    body     = request.json
+    password = body.get("password","")
+    messages = body.get("messages",[])
 
     if APP_PASSWORD and password != APP_PASSWORD:
         return jsonify({"error":"Şifre hatalı"}), 401
 
-    key = ANTHROPIC_KEY or user_key
-    if not key:
-        return jsonify({"error":"Anthropic API key gerekli"}), 400
+    if not messages:
+        return jsonify({"error":"Mesaj boş"}), 400
 
-    for _ in range(8):
-        resp = requests.post(CLAUDE_API,
-            headers={"x-api-key":key,"anthropic-version":"2023-06-01","content-type":"application/json"},
-            json={"model":"claude-haiku-4-5-20251001","max_tokens":2048,
-                  "system":SYSTEM,"tools":TOOLS,"messages":messages},
-            timeout=60).json()
+    # Son kullanıcı mesajını al
+    last_msg = ""
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            content = m.get("content","")
+            last_msg = content if isinstance(content, str) else str(content)
+            break
 
-        if "error" in resp:
-            return jsonify({"error":resp["error"].get("message","API hatası")}), 500
+    try:
+        ensure_fresh_boards()
+        reply = handle_query(last_msg)
+    except Exception as e:
+        reply = f"Hata oluştu: {str(e)}"
 
-        content     = resp.get("content",[])
-        stop_reason = resp.get("stop_reason","")
-        messages.append({"role":"assistant","content":content})
-
-        if stop_reason == "end_turn":
-            text = " ".join(c["text"] for c in content if c.get("type")=="text")
-            return jsonify({"reply":text,"messages":messages})
-
-        if stop_reason == "tool_use":
-            results = []
-            for blk in content:
-                if blk.get("type") != "tool_use": continue
-                name, inp, tid = blk["name"], blk["input"], blk["id"]
-                try:
-                    if   name == "list_boards":      r = tool_list_boards(inp.get("query",""))
-                    elif name == "query_board":      r = tool_query_board(inp["board_name"],inp.get("year"),inp.get("month"),inp.get("group_name"),inp.get("metric","sum"))
-                    elif name == "get_board_groups":  r = tool_get_groups(inp["board_name"])
-                    elif name == "get_board_columns": r = tool_get_columns(inp["board_name"])
-                    else: r = {"error":f"Bilinmeyen: {name}"}
-                except Exception as e: r = {"error":str(e)}
-                results.append({"type":"tool_result","tool_use_id":tid,"content":json.dumps(r,ensure_ascii=False)})
-            messages.append({"role":"user","content":results})
-        else:
-            text = " ".join(c.get("text","") for c in content if c.get("type")=="text")
-            return jsonify({"reply":text or "Hata oluştu.","messages":messages})
-
-    return jsonify({"reply":"Çok karmaşık sorgu, daha basit sorun.","messages":messages})
+    messages.append({"role":"assistant","content":reply})
+    return jsonify({"reply": reply, "messages": messages})
 
 @app.route("/api/status")
 def status():
