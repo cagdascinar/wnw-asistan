@@ -118,12 +118,22 @@ def fetch_global():
 def _global():
     try:
         d = GET("https://api.coingecko.com/api/v3/global", timeout=6)["data"]
+        # BTC/TRY ayrı çağrı
+        try:
+            btc_try_d = GET("https://api.coingecko.com/api/v3/simple/price",
+                            {"ids": "bitcoin", "vs_currencies": "try,usd"}, timeout=5)
+            btc_try = float(btc_try_d["bitcoin"]["try"])
+            usd_try = round(btc_try / float(btc_try_d["bitcoin"]["usd"]), 2)
+        except Exception:
+            btc_try = 0; usd_try = 0
         return {
             "btc_dom":    round(d["market_cap_percentage"].get("btc", 0), 2),
             "mcap_change": round(d.get("market_cap_change_percentage_24h_usd", 0), 2),
+            "btc_try":    round(btc_try, 0),
+            "usd_try":    usd_try,
         }
     except Exception:
-        return {"btc_dom": 0.0, "mcap_change": 0.0}
+        return {"btc_dom": 0.0, "mcap_change": 0.0, "btc_try": 0, "usd_try": 0}
 
 # ── Haberler (CryptoCompare – ücretsiz, API key gerekmez) ────────────────────
 def fetch_news():
@@ -1023,6 +1033,33 @@ function renderYorum(g, price) {
   for (var j = 0; j < lines.length; j++) {
     html += '<div class="yorum-item">' + lines[j] + '</div>';
   }
+
+  // ── Asgari ücret kazanç hesabı ─────────────────────────────────────────
+  var MIN_UCRET_AYLIK = 22104; // TL - 2026 Türkiye asgari ücret tahmini
+  var MIN_UCRET_GUNLUK = Math.round(MIN_UCRET_AYLIK / 22);
+  var btcTry = (price && price._btc_try) ? price._btc_try : 0;
+  if (!btcTry && window._globalData) btcTry = window._globalData.btc_try || 0;
+
+  if (btcTry > 0) {
+    // Beklenen hareket: skora göre tahmin
+    var absScore = Math.abs(sc);
+    var expectedPct = absScore > 40 ? 3.5 : (absScore > 25 ? 2.5 : (absScore > 15 ? 1.5 : 0.8));
+    // Gerekli pozisyon: hedef_kazanç / beklenen_%
+    var gerekliTL = Math.round(MIN_UCRET_GUNLUK / (expectedPct / 100));
+    var gerekliUSD = Math.round(gerekliTL / (btcTry / curPrice));
+    var gerekliStr = gerekliTL.toLocaleString('tr-TR') + ' &#8378;';
+    if (gerekliUSD > 0) gerekliStr += ' (~' + gerekliUSD.toLocaleString('tr-TR') + ' $)';
+
+    html += '<div class="yorum-item" style="margin-top:6px;border-top:1px solid rgba(255,255,255,.06);padding-top:8px">';
+    html += '&#x1F994; <b>Kirpi Hesabı:</b> Bugün asgari ücretli bir çalışan <b>' + MIN_UCRET_GUNLUK.toLocaleString('tr-TR') + ' TL</b> kazanıyor. ';
+    html += 'Şu anki sinyale göre BTC <b>~%' + expectedPct + '</b> hareket bekleniyor. ';
+    html += 'Bu hareketten aynı kazancı elde etmek için yaklaşık <b>' + gerekliStr + '</b> büyüklüğünde pozisyon gerekiyor.';
+    if (gerekliUSD > 5000) {
+      html += ' Kaldıraç kullanılırsa (örn. 5x) teminat olarak <b>~' + Math.round(gerekliUSD/5).toLocaleString('tr-TR') + ' $</b> yeter — ama kaldıraç riski de katlar.';
+    }
+    html += '</div>';
+  }
+
   items.innerHTML = html;
 }
 
@@ -1055,6 +1092,7 @@ function loadDash() {
     document.getElementById('hl').textContent = fP(p.low);
     document.getElementById('hv').textContent = fM(p.vol_usdt);
     document.getElementById('hdom').textContent = (res.global ? res.global.btc_dom.toFixed(1) : '--') + '%';
+    if (res.global) window._globalData = res.global;
 
     if (res.gauges) {
       var g = res.gauges;
