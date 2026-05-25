@@ -644,7 +644,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);
   <div class="header">
     <div class="hav">⚡</div>
     <div class="hinfo">
-      <div class="hname">WW Asistan <span style="font-size:9px;opacity:.4;font-weight:400">v8</span></div>
+      <div class="hname">WW Asistan <span style="font-size:9px;opacity:.4;font-weight:400">v9</span></div>
       <div class="hstatus warn" id="hstatus">
         <div class="hdot pulse"></div>
         <span id="hstatusText">Bağlanıyor...</span>
@@ -673,190 +673,149 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);
 
   <div class="input-bar">
     <textarea class="msg-inp" id="msgInp" placeholder="Soru sorun..." rows="1"></textarea>
-    <button class="send-btn" id="sendBtn" type="button">↑</button>
+    <button class="send-btn" id="sendBtn" type="button" onclick="sendMessage()" ontouchend="event.preventDefault();sendMessage()">↑</button>
   </div>
 </div>
 
 <div class="toast" id="toast"></div>
 
 <script>
-var BASE = location.origin;
-let messages = [];
-let loading  = false;
-let lastQuery = '';
-let boardsReady = false;
+var BASE     = location.origin;
+var messages = [];
+var loading  = false;
+var lastQuery = '';
 
-// ── FETCH WITH TIMEOUT ────────────────────────────────────────────────────
-function fetchT(url, opts, ms) {
-  ms = ms || 10000;
-  return new Promise(function(resolve, reject) {
-    var ctrl = new AbortController();
-    var tid  = setTimeout(function() { ctrl.abort(); }, ms);
-    fetch(url, Object.assign({}, opts || {}, {signal: ctrl.signal}))
-      .then(function(r) { clearTimeout(tid); resolve(r); })
-      .catch(function(e) { clearTimeout(tid); reject(e); });
+// ── STATUS (XMLHttpRequest tabanlı) ──────────────────────────────────────
+function setStatus(state, text) {
+  var el  = document.getElementById('hstatus');
+  var tx  = document.getElementById('hstatusText');
+  var dot = el.querySelector('.hdot');
+  el.className  = 'hstatus ' + state;
+  tx.textContent = text;
+  if (state === 'ok') dot.classList.remove('pulse');
+  else dot.classList.add('pulse');
+}
+
+function xhrGet(url, cb) {
+  var x = new XMLHttpRequest();
+  x.open('GET', url, true);
+  x.timeout = 12000;
+  x.onload = function() {
+    try { cb(null, JSON.parse(x.responseText)); }
+    catch(e) { cb(e); }
+  };
+  x.onerror = x.ontimeout = function() { cb(new Error('timeout')); };
+  x.send();
+}
+
+var _pollCount = 0;
+function pollStatus() {
+  xhrGet(BASE + '/api/status', function(err, d) {
+    if (err) {
+      _pollCount++;
+      setStatus('err', 'Bağlanamıyor (' + _pollCount + ')');
+      if (_pollCount < 10) setTimeout(pollStatus, 4000);
+      else setStatus('err', '⚠️ Sunucuya ulaşılamıyor');
+      return;
+    }
+    _pollCount = 0;
+    if (d.boards > 0) {
+      setStatus('ok', d.boards + ' pano yüklü ✓');
+    } else {
+      setStatus('warn', d.loading ? 'Panolar yükleniyor...' : 'Bağlandı, panolar bekleniyor...');
+      setTimeout(pollStatus, 6000);
+    }
   });
 }
 
-// ── STATUS ────────────────────────────────────────────────────────────────
-var _statusTimer = null;
-
-function setStatus(state, text) {
-  var el = document.getElementById('hstatus');
-  var tx = document.getElementById('hstatusText');
-  var dot = el.querySelector('.hdot');
-  el.className = 'hstatus ' + state;
-  tx.textContent = text;
-  if (state === 'ok') { dot.classList.remove('pulse'); }
-  else { dot.classList.add('pulse'); }
-}
-
-async function checkStatus() {
-  for (var i = 0; i < 6; i++) {
-    try {
-      var r = await fetchT(BASE + '/api/status', {}, 12000);
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      var d = await r.json();
-      if (d.boards > 0) {
-        setStatus('ok', d.boards + ' pano yüklü ✓');
-        boardsReady = true;
-        clearInterval(_statusTimer);
-      } else if (d.loading) {
-        setStatus('warn', 'Panolar yükleniyor...');
-        boardsReady = false;
-      } else {
-        setStatus('warn', 'Sunucu hazır, panolar bekleniyor...');
-      }
-      return d;
-    } catch(e) {
-      setStatus('err', 'Bağlanılamıyor (' + (i+1) + '/6)');
-      if (i < 5) await sleep(3000);
-    }
-  }
-  setStatus('err', '⚠️ Sunucuya ulaşılamıyor');
-  return null;
-}
-
-function sleep(ms) {
-  return new Promise(function(r) { setTimeout(r, ms); });
-}
-
-function startStatusPolling() {
-  checkStatus();
-  // Eğer panolar henüz yüklenmediyse her 8 saniyede bir dene
-  _statusTimer = setInterval(async function() {
-    if (boardsReady) { clearInterval(_statusTimer); return; }
-    try {
-      var r = await fetchT(BASE + '/api/status', {}, 8000);
-      var d = await r.json();
-      if (d.boards > 0) {
-        setStatus('ok', d.boards + ' pano yüklü ✓');
-        boardsReady = true;
-        clearInterval(_statusTimer);
-        toast('✓ ' + d.boards + ' pano hazır!');
-      } else if (d.loading) {
-        setStatus('warn', 'Panolar yükleniyor...');
-      }
-    } catch(e) {}
-  }, 8000);
-}
-
-// Keep-alive: Railway'i uyutmamak için her 4 dakikada ping
+// Keep-alive her 4 dk
 setInterval(function() {
-  fetch(BASE + '/api/ping').catch(function(){});
+  var x = new XMLHttpRequest();
+  x.open('GET', BASE + '/api/ping', true);
+  x.send();
 }, 240000);
 
-// ── SEND ─────────────────────────────────────────────────────────────────
+// ── SEND (XMLHttpRequest tabanlı) ─────────────────────────────────────────
 function removeWelcome() {
   var w = document.getElementById('welcome');
   if (w) w.remove();
   document.getElementById('sugs').style.display = 'none';
 }
 
-async function sendMessage(text) {
-  text = (text || document.getElementById('msgInp').value).trim();
+function sendMessage(txt) {
+  var inp  = document.getElementById('msgInp');
+  var text = (txt !== undefined ? txt : inp.value).trim();
   if (!text || loading) return;
 
   removeWelcome();
   lastQuery = text;
 
   addBubble('user', text);
-  document.getElementById('msgInp').value = '';
-  document.getElementById('msgInp').style.height = 'auto';
+  inp.value = '';
+  inp.style.height = 'auto';
   messages.push({role:'user', content:text});
 
   var tid = addTyping();
-  setLoading(true);
-  setLoadingBar(30);
+  loading = true;
+  document.getElementById('sendBtn').disabled = true;
 
-  try {
-    var r = await fetchT(BASE + '/api/chat', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({messages: messages.slice(-20)})
-    }, 50000);
+  var x = new XMLHttpRequest();
+  x.open('POST', BASE + '/api/chat', true);
+  x.setRequestHeader('Content-Type', 'application/json');
+  x.timeout = 50000;
 
-    setLoadingBar(80);
-    var data = await r.json();
-    setLoadingBar(100);
+  x.onload = function() {
     removeTyping(tid);
-
-    if (data.error) {
-      addBubble('bot', '❌ ' + data.error, true);
-    } else {
-      addBubble('bot', data.reply);
-      messages = data.messages || messages;
+    loading = false;
+    document.getElementById('sendBtn').disabled = false;
+    try {
+      var data = JSON.parse(x.responseText);
+      if (data.error) {
+        addBubble('bot', '&#10060; ' + data.error, true);
+      } else {
+        addBubble('bot', data.reply);
+        messages = data.messages || messages;
+      }
+    } catch(e) {
+      addBubble('bot', '&#10060; Yanit alinamadi.', true);
     }
-  } catch(e) {
+  };
+
+  x.onerror = function() {
     removeTyping(tid);
-    setLoadingBar(0);
-    var errMsg = e.name === 'AbortError'
-      ? '⏱ Sunucu 50 saniyede yanıt vermedi. Tekrar deneyin.'
-      : '📡 Sunucuya ulaşılamıyor. İnternet bağlantınızı kontrol edin.';
-    addBubble('bot', errMsg, true, true);
-  } finally {
-    setLoading(false);
-    setTimeout(function() { setLoadingBar(0); }, 600);
-  }
-}
+    loading = false;
+    document.getElementById('sendBtn').disabled = false;
+    addBubble('bot', '&#10060; Sunucuya ulasilamiyor. Tekrar deneyin.', true);
+  };
 
-function setLoading(v) {
-  loading = v;
-  document.getElementById('sendBtn').disabled = v;
-}
+  x.ontimeout = function() {
+    removeTyping(tid);
+    loading = false;
+    document.getElementById('sendBtn').disabled = false;
+    addBubble('bot', '&#10060; Sunucu 50 saniyede yanit vermedi. Tekrar deneyin.', true);
+  };
 
-function setLoadingBar(pct) {
-  var bar = document.getElementById('loadingBar');
-  bar.style.width = pct + '%';
-  bar.style.opacity = pct > 0 && pct < 100 ? '1' : '0';
+  x.send(JSON.stringify({messages: messages.slice(-20)}));
 }
 
 // ── BUBBLES ───────────────────────────────────────────────────────────────
-function addBubble(role, text, isErr, showRetry) {
+function addBubble(role, text, isErr) {
   var msgs = document.getElementById('msgs');
   var row  = document.createElement('div');
-  row.className = 'mrow' + (role==='user' ? ' user' : '');
+  row.className = 'mrow' + (role === 'user' ? ' user' : '');
 
   var av = document.createElement('div');
-  av.className = 'mav' + (role==='user' ? ' u' : '');
-  av.textContent = role==='user' ? '👤' : '⚡';
+  av.className   = 'mav' + (role === 'user' ? ' u' : '');
+  av.textContent = role === 'user' ? '?' : '?';
 
   var b = document.createElement('div');
   b.className = 'bubble ' + role + (isErr ? ' err' : '');
   b.innerHTML = fmt(text);
 
   var t = document.createElement('div');
-  t.className = 'btime';
-  t.textContent = new Date().toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'});
+  t.className    = 'btime';
+  t.textContent  = new Date().toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'});
   b.appendChild(t);
-
-  if (showRetry) {
-    var rb = document.createElement('button');
-    rb.className = 'retry-btn';
-    rb.textContent = '↩ Tekrar dene';
-    rb.onclick = function() { row.remove(); messages.pop(); sendMessage(lastQuery); };
-    b.appendChild(rb);
-  }
 
   row.appendChild(av);
   row.appendChild(b);
@@ -867,10 +826,15 @@ function addBubble(role, text, isErr, showRetry) {
 function addTyping() {
   var msgs = document.getElementById('msgs');
   var row  = document.createElement('div');
+  var id   = 'ty' + Date.now();
   row.className = 'mrow';
-  var id = 'ty' + Date.now();
-  row.id = id;
-  row.innerHTML = '<div class="mav">⚡</div><div class="typing"><div class="tdot"></div><div class="tdot"></div><div class="tdot"></div></div>';
+  row.id        = id;
+  var av = document.createElement('div');
+  av.className = 'mav'; av.textContent = '?';
+  var tp = document.createElement('div');
+  tp.className = 'typing';
+  tp.innerHTML = '<div class="tdot"></div><div class="tdot"></div><div class="tdot"></div>';
+  row.appendChild(av); row.appendChild(tp);
   msgs.appendChild(row);
   msgs.scrollTop = msgs.scrollHeight;
   return id;
@@ -881,66 +845,40 @@ function removeTyping(id) {
   if (e) e.remove();
 }
 
-function fmt(text) {
-  return String(text)
+function fmt(t) {
+  return String(t)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/\*\*(.*?)\*\*/g,'<b>$1</b>')
-    .replace(/\*(.*?)\*/g,'<em>$1</em>')
-    .replace(/_(.*?)_/g,'<em>$1</em>')
-    .replace(/`(.*?)`/g,'<code style="background:rgba(255,255,255,.1);padding:1px 5px;border-radius:4px;font-size:12px">$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
     .replace(/\n/g,'<br>');
 }
 
-// ── CHIP SUGGESTIONS ──────────────────────────────────────────────────────
-document.querySelectorAll('.chip').forEach(function(chip) {
-  chip.addEventListener('click', function() {
+// ── CHIPS ─────────────────────────────────────────────────────────────────
+var chips = document.querySelectorAll('.chip');
+for (var ci = 0; ci < chips.length; ci++) {
+  chips[ci].onclick = function() {
     var inp = document.getElementById('msgInp');
     inp.value = this.textContent.trim();
-    inp.style.height = 'auto';
-    inp.style.height = Math.min(inp.scrollHeight, 100) + 'px';
     inp.focus();
-  });
-});
+  };
+}
 
-// ── INPUT EVENTS ──────────────────────────────────────────────────────────
-var msgInp = document.getElementById('msgInp');
-msgInp.addEventListener('input', function() {
-  this.style.height = 'auto';
-  this.style.height = Math.min(this.scrollHeight, 100) + 'px';
-});
-msgInp.addEventListener('keydown', function(e) {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
-});
+// ── INPUT ─────────────────────────────────────────────────────────────────
+document.getElementById('msgInp').onkeydown = function(e) {
+  if (e.keyCode === 13 && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+};
 
-document.getElementById('sendBtn').addEventListener('click', function() {
-  sendMessage();
-});
-
-// ── HEADER BUTTONS ────────────────────────────────────────────────────────
-document.getElementById('clearBtn').addEventListener('click', function() {
+// ── HEADER ────────────────────────────────────────────────────────────────
+document.getElementById('clearBtn').onclick = function() {
   messages = [];
   var msgs = document.getElementById('msgs');
-  msgs.innerHTML = `<div class="welcome" id="welcome"><div class="w-ico">👋</div><div class="w-title">Merhaba!</div><div class="w-sub">Monday.com'daki verileriniz hakkında Türkçe soru sorabilirsiniz.</div></div>`;
+  msgs.innerHTML = '<div class="welcome" id="welcome"><div class="w-ico">?</div><div class="w-title">Merhaba!</div><div class="w-sub">Soru sormak icin asagidan ornek secin veya yazin.</div></div>';
   document.getElementById('sugs').style.display = 'flex';
-});
+};
 
-document.getElementById('helpBtn').addEventListener('click', function() {
+document.getElementById('helpBtn').onclick = function() {
   removeWelcome();
-  sendMessage('yardım');
-});
-
-// ── SETUP BUTTON ─────────────────────────────────────────────────────────
-var startBtn = document.getElementById('startBtn');
-if (startBtn) {
-  startBtn.addEventListener('click', function() {
-    document.getElementById('setup').style.display = 'none';
-    document.getElementById('chat-screen').style.display = 'flex';
-    startStatusPolling();
-  });
-}
+  sendMessage('yardim');
+};
 
 // ── TOAST ─────────────────────────────────────────────────────────────────
 var _tt;
@@ -949,14 +887,7 @@ function toast(msg) {
   el.textContent = msg;
   el.classList.add('show');
   clearTimeout(_tt);
-  _tt = setTimeout(function() { el.classList.remove('show'); }, 3500);
-}
-
-// ── iOS INSTALL BANNER ────────────────────────────────────────────────────
-var isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-if (isIOS && !navigator.standalone) {
-  var ib = document.getElementById('installBar');
-  if (ib) ib.classList.add('show');
+  _tt = setTimeout(function(){ el.classList.remove('show'); }, 3000);
 }
 
 // ── SERVICE WORKER ────────────────────────────────────────────────────────
@@ -965,7 +896,7 @@ if ('serviceWorker' in navigator) {
 }
 
 // ── INIT ──────────────────────────────────────────────────────────────────
-startStatusPolling();
+pollStatus();
 </script>
 </body>
 </html>"""
