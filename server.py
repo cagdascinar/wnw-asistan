@@ -147,6 +147,22 @@ def find_board(query):
             best_id, best_b = bid, b
     return (best_id, best_b) if best_s > 0 else None
 
+def find_all_boards(query, min_score=30):
+    """Sorguyla eşleşen TÜM panoları döndür (en yüksek skora göre filtreli)."""
+    q = nrm(query.strip())
+    words = [w for w in re.split(r"\W+", q) if w and len(w) > 1]
+    if not words: return []
+    scored = []
+    top_score = 0
+    for bid, b in boards_cache.items():
+        s = score_board(b["name"], words, q)
+        if s > 0:
+            scored.append((s, bid, b))
+            if s > top_score: top_score = s
+    scored.sort(reverse=True)
+    cutoff = max(min_score, top_score * 0.35)
+    return [(bid, b) for s, bid, b in scored if s >= cutoff]
+
 def search_boards(query=""):
     if not query:
         res = sorted(boards_cache.items(), key=lambda x: x[1]["name"])
@@ -222,8 +238,13 @@ def parse_intent(text):
             board_id, b = found
             board_name  = b["name"]
 
+    multi_kw = ["tum panolar","tüm panolar","butun pano","bütün pano",
+                "hepsini","panolardan","tum masraf","tüm masraf",
+                "tum bordro","tüm bordro","tum fatura","tüm fatura"]
+    is_multi = any(nrm(k) in tn for k in multi_kw)
+
     return {"intent":"query","board_id":board_id,"board_name":board_name,
-            "year":year,"month":month,"metric":metric}
+            "year":year,"month":month,"metric":metric,"multi":is_multi}
 
 # ── BOARD QUERY ──────────────────────────────────────────────────────────────
 
@@ -324,6 +345,63 @@ def fmt_result(res, metric):
             lines.append(f"  – {s['name'][:45]}{g}")
     return "\n".join(lines)
 
+def do_multi_query(board_query, year=None, month=None, metric="sum"):
+    """Eşleşen TÜM panolara sorgu at, sonuçları birleştir."""
+    maybe_reload()
+    clean = re.sub(r"\b20\d{2}\b", " ", nrm(board_query))
+    for mn in sorted(MONTHS_ALL.keys(), key=len, reverse=True):
+        clean = re.sub(r"\b" + re.escape(nrm(mn)) + r"\b", " ", clean)
+    words = [w for w in re.split(r"\W+", clean) if w and w not in GRAMMAR and len(w) > 1]
+    if not words:
+        return {"error": "Sorgu anlaşılamadı"}
+    all_boards = find_all_boards(" ".join(words))
+    if not all_boards:
+        return {"error": f"'{board_query}' ile eşleşen pano bulunamadı"}
+    results, errs = [], []
+    for bid, binfo in all_boards[:15]:
+        try:
+            res = do_query(binfo["name"], year=year, month=month, metric=metric)
+            if "error" not in res:
+                results.append(res)
+        except Exception as e:
+            errs.append(f"{binfo['name']}: {e}")
+    grand = round(sum(r.get("grand_total", 0) for r in results), 2)
+    total_items = sum(r.get("total_items", 0) for r in results)
+    return {"boards": results, "grand_total": grand, "total_items": total_items,
+            "board_count": len(results), "errors": errs}
+
+def fmt_multi_result(res, year, month, metric):
+    if "error" in res:
+        return f"Hata: {res['error']}"
+    n_boards = res["board_count"]
+    period = " ".join(filter(None, [
+        str(year) if year else "",
+        MONTH_NAMES[month] if month else ""
+    ])) or "Tüm zamanlar"
+
+    lines = [f"📊 **{period} — {n_boards} pano**", ""]
+    for b in res["boards"]:
+        bname = b["board_name"]
+        n = b["total_items"]
+        if metric == "count":
+            lines.append(f"• **{bname}**: {n} kayıt")
+        else:
+            gt = b.get("grand_total", 0)
+            amounts = b.get("amounts", {})
+            if gt:
+                lines.append(f"• **{bname}**: {fmt_money(gt)} ({n} kayıt)")
+            elif amounts == {} and n > 0:
+                lines.append(f"• **{bname}**: {n} kayıt (sayısal sütun yok)")
+
+    if not res["boards"]:
+        return f"**{period}** için hiçbir panoda kayıt bulunamadı."
+
+    if metric == "count":
+        lines.append(f"\n📋 **TOPLAM: {res['total_items']} kayıt**")
+    elif res["grand_total"]:
+        lines.append(f"\n💰 **GENEL TOPLAM: {fmt_money(res['grand_total'])}**")
+    return "\n".join(lines)
+
 HELP_TEXT = """**WW Asistan — Nasıl kullanılır?**
 
 Türkçe soru sormanız yeterli:
@@ -339,6 +417,10 @@ Türkçe soru sormanız yeterli:
 
 📂 **Pano listesi:**
 • Hangi panolar var?
+
+🔢 **Çoklu pano toplamı:**
+• Nisan 2026 Genel Giderler panolardan toplam?
+• Bu yıl tüm masraf panolarından toplam?
 
 💡 Pano adını bilmiyorsanız **"hangi panolar var?"** yazın."""
 
@@ -390,9 +472,15 @@ def handle_query(text):
                 f"Tüm panoları görmek için: **\"hangi panolar var?\"**")
 
     try:
-        res = do_query(intent["board_name"], year=intent["year"],
-                       month=intent["month"], metric=intent["metric"])
-        return fmt_result(res, intent["metric"])
+        if intent.get("multi"):
+            query_str = intent["board_name"] or text
+            res = do_multi_query(query_str, year=intent["year"],
+                                 month=intent["month"], metric=intent["metric"])
+            return fmt_multi_result(res, intent["year"], intent["month"], intent["metric"])
+        else:
+            res = do_query(intent["board_name"], year=intent["year"],
+                           month=intent["month"], metric=intent["metric"])
+            return fmt_result(res, intent["metric"])
     except Exception as e:
         return f"Sorgu hatası: {str(e)}"
 
@@ -697,9 +785,9 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);
     <button class="chip" type="button">Hangi panolar var?</button>
     <button class="chip" type="button">Nisan 2026 E-Arşiv tutarı?</button>
     <button class="chip" type="button">Bu yıl E-Fatura matrahı?</button>
-    <button class="chip" type="button">Genel Gider 2026 toplamı?</button>
+    <button class="chip" type="button">Nisan 2026 Genel Giderler panolardan toplam</button>
     <button class="chip" type="button">Masraf formunda kaç kayıt?</button>
-    <button class="chip" type="button">Bu ayki harcama ne kadar?</button>
+    <button class="chip" type="button">Bu ay tüm masraf panolarından toplam</button>
   </div>
 
   <div class="input-bar">
