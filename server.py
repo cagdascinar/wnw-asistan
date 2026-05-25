@@ -510,12 +510,12 @@ if (isIOS && !isStandalone) {
 async function checkStatus() {
   for (let i = 0; i < 3; i++) {
     try {
-      const r = await fetch(BASE + '/api/status', {signal: AbortSignal.timeout(10000)});
+      const r = await fetch(BASE + '/api/status');
       const d = await r.json();
       serverKey  = d.server_key;
       pwRequired = d.password_required;
       return d;
-    } catch { await new Promise(r => setTimeout(r, 2000)); }
+    } catch { await new Promise(res => setTimeout(res, 2000)); }
   }
   return null;
 }
@@ -612,7 +612,9 @@ async function sendMessage() {
     const data = await r.json();
     removeTyping(tid);
     if (data.error) {
-      addBubble('bot', '❌ ' + data.error);
+      let msg = data.error;
+      if (msg.includes('credit balance')) msg = '💳 Anthropic krediniz yetersiz. console.anthropic.com → Billing → Add Credits\'den $5 ekleyin.';
+      addBubble('bot', '❌ ' + msg);
       if (data.error.includes('Şifre')) { localStorage.removeItem('ww_pw'); password=''; }
     } else {
       addBubble('bot', data.reply);
