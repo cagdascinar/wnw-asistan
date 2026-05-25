@@ -919,7 +919,7 @@ document.getElementById('sendBtn').addEventListener('click', function() {
 document.getElementById('clearBtn').addEventListener('click', function() {
   messages = [];
   var msgs = document.getElementById('msgs');
-  msgs.innerHTML = '<div class="welcome" id="welcome"><div class="w-ico">👋</div><div class="w-title">Merhaba!</div><div class="w-sub">Monday.com\'daki verileriniz hakkında Türkçe soru sorabilirsiniz.</div></div>';
+  msgs.innerHTML = `<div class="welcome" id="welcome"><div class="w-ico">👋</div><div class="w-title">Merhaba!</div><div class="w-sub">Monday.com'daki verileriniz hakkında Türkçe soru sorabilirsiniz.</div></div>`;
   document.getElementById('sugs').style.display = 'flex';
 });
 
