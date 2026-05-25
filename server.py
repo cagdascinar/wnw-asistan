@@ -453,7 +453,9 @@ def index():
     html = MOBILE_HTML
     html = html.replace('id="setup"',       'id="setup" style="display:none!important"')
     html = html.replace('id="chat-screen"', 'id="chat-screen" style="display:flex!important"')
-    return html
+    resp = Response(html, content_type="text/html; charset=utf-8")
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return resp
 
 # ── HTML ─────────────────────────────────────────────────────────────────────
 MOBILE_HTML = """<!DOCTYPE html>
@@ -639,7 +641,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);
   <div class="header">
     <div class="hav">⚡</div>
     <div class="hinfo">
-      <div class="hname">WW Asistan</div>
+      <div class="hname">WW Asistan <span style="font-size:9px;opacity:.4;font-weight:400">v8</span></div>
       <div class="hstatus warn" id="hstatus">
         <div class="hdot pulse"></div>
         <span id="hstatusText">Bağlanıyor...</span>
@@ -675,8 +677,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);
 <div class="toast" id="toast"></div>
 
 <script>
-'use strict';
-const BASE = location.origin;
+var BASE = location.origin;
 let messages = [];
 let loading  = false;
 let lastQuery = '';
