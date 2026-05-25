@@ -510,6 +510,10 @@ html,body{min-height:100%;background:var(--bg);color:var(--txt);font-family:var(
 .rbtn:active{opacity:.5}
 @keyframes spin{to{transform:rotate(360deg)}}
 .spin{animation:spin .7s linear infinite}
+@keyframes flash-up{0%{color:var(--buy);text-shadow:0 0 12px rgba(0,230,118,.6)}100%{}}
+@keyframes flash-dn{0%{color:var(--sell);text-shadow:0 0 12px rgba(255,61,90,.6)}100%{}}
+.flash-up{animation:flash-up .6s ease-out}
+.flash-dn{animation:flash-dn .6s ease-out}
 
 /* Hero */
 .hero{padding:18px 16px 14px;text-align:center}
@@ -1173,8 +1177,48 @@ function loadAll() {
 // Açık pozisyon varsa timer başlat
 updatePosCard();
 startPosTimer();
+// ── Canlı fiyat ticker (1.5 saniyede bir) ─────────────────────────────────
+var _lastPrice = 0;
+var _tickerXhr = null;
+
+function priceTick() {
+  if (_tickerXhr) return; // önceki istek bitmeden yeni gönderme
+  _tickerXhr = new XMLHttpRequest();
+  _tickerXhr.open('GET', '/api/price', true);
+  _tickerXhr.timeout = 4000;
+  _tickerXhr.onreadystatechange = function() {
+    if (_tickerXhr.readyState !== 4) return;
+    var xhr = _tickerXhr;
+    _tickerXhr = null;
+    if (xhr.status !== 200) return;
+    var res; try { res = JSON.parse(xhr.responseText); } catch(e) { return; }
+    if (!res.ok || !res.data) return;
+    var p = res.data;
+    var priceEl = document.getElementById('hp');
+    var prev = _lastPrice;
+    _lastPrice = p.price;
+    // Flaş animasyonu
+    if (prev > 0 && p.price !== prev) {
+      priceEl.classList.remove('flash-up','flash-dn');
+      void priceEl.offsetWidth; // reflow
+      priceEl.classList.add(p.price > prev ? 'flash-up' : 'flash-dn');
+    }
+    document.getElementById('hp').textContent = fP(p.price);
+    var ce = document.getElementById('hc');
+    ce.textContent = (p.change >= 0 ? '+' : '') + p.change.toFixed(2) + '%';
+    ce.className = 'hero-c ' + (p.change >= 0 ? 'up' : 'dn');
+    document.getElementById('hh').textContent = fP(p.high);
+    document.getElementById('hl').textContent = fP(p.low);
+    document.getElementById('hv').textContent = fM(p.vol_usdt);
+    document.getElementById('updt').textContent = nowT();
+    curPrice = p.price;
+  };
+  _tickerXhr.send();
+}
+
 loadAll();
-setInterval(loadAll, 30000);
+setInterval(priceTick, 1500);   // fiyat: her 1.5sn
+setInterval(loadAll, 60000);    // göstergeler: her 60sn
 </script>
 </body>
 </html>"""
