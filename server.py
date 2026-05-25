@@ -16,6 +16,8 @@ boards_cache = {}
 _lock        = threading.Lock()
 last_refresh = 0.0
 _loading     = False
+_items_cache     = {}      # bid -> (timestamp, items)
+_items_cache_ttl = 300     # 5 dakika
 
 # ── MONDAY API ───────────────────────────────────────────────────────────────
 
@@ -60,6 +62,11 @@ def maybe_reload():
         threading.Thread(target=_load_boards, daemon=True).start()
 
 def fetch_items(bid):
+    now = time.time()
+    if bid in _items_cache:
+        ts, cached = _items_cache[bid]
+        if now - ts < _items_cache_ttl:
+            return cached
     items, cur = [], None
     while True:
         c = f',cursor:"{cur}"' if cur else ""
@@ -71,6 +78,7 @@ def fetch_items(bid):
         cur = page["cursor"]
         if not cur:
             break
+    _items_cache[bid] = (time.time(), items)
     return items
 
 def col_val(item, cid):
@@ -356,8 +364,25 @@ def handle_query(text):
         return "⏳ Panolar henüz yükleniyor (ilk açılışta ~30 sn sürebilir). Lütfen biraz bekleyin ve tekrar sorun."
 
     if not intent["board_id"]:
-        samples = list(boards_cache.values())[:6]
-        ex = ", ".join(f'"{b["name"][:22]}"' for b in samples[:4])
+        # En yakın tahminleri bul
+        clean_q = re.sub(r"\b20\d{2}\b", " ", nrm(text))
+        for mn in sorted(MONTHS_ALL.keys(), key=len, reverse=True):
+            clean_q = re.sub(r"\b" + re.escape(nrm(mn)) + r"\b", " ", clean_q)
+        sw = [w for w in re.split(r"\W+", clean_q) if w and w not in GRAMMAR and len(w) > 1]
+        close = []
+        if sw:
+            qn = " ".join(sw)
+            for bid, b in boards_cache.items():
+                s = score_board(b["name"], sw, qn)
+                if s > 0:
+                    close.append((s, b["name"]))
+            close.sort(reverse=True)
+        if close:
+            sug = "\n".join(f"• {n}" for _, n in close[:4])
+            return (f"Eşleşen pano bulunamadı. Bunları kastettiniz mi?\n\n{sug}"
+                    f"\n\nTüm panolar için: **\"hangi panolar var?\"**")
+        samples = list(boards_cache.values())[:4]
+        ex = ", ".join(f'"{b["name"][:22]}"' for b in samples)
         return (f"Bu soruyla eşleşen pano bulunamadı.\n\n"
                 f"Örnek panolar: {ex}\n\n"
                 f"Tüm panoları görmek için: **\"hangi panolar var?\"**")
@@ -644,7 +669,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);
   <div class="header">
     <div class="hav">⚡</div>
     <div class="hinfo">
-      <div class="hname">WW Asistan <span style="font-size:9px;opacity:.4;font-weight:400">v9</span></div>
+      <div class="hname">WW Asistan <span style="font-size:9px;opacity:.4;font-weight:400">v10</span></div>
       <div class="hstatus warn" id="hstatus">
         <div class="hdot pulse"></div>
         <span id="hstatusText">Bağlanıyor...</span>
@@ -738,6 +763,13 @@ setInterval(function() {
   x.send();
 }, 240000);
 
+// ── LOADING BAR ───────────────────────────────────────────────────────────
+function setLoadingBar(pct) {
+  var bar = document.getElementById('loadingBar');
+  bar.style.width = pct + '%';
+  if (pct >= 100) setTimeout(function() { bar.style.width = '0%'; }, 400);
+}
+
 // ── SEND (XMLHttpRequest tabanlı) ─────────────────────────────────────────
 function removeWelcome() {
   var w = document.getElementById('welcome');
@@ -770,6 +802,7 @@ function sendMessage(txt) {
   x.onload = function() {
     removeTyping(tid);
     loading = false;
+    setLoadingBar(100);
     document.getElementById('sendBtn').disabled = false;
     try {
       var data = JSON.parse(x.responseText);
@@ -785,19 +818,18 @@ function sendMessage(txt) {
   };
 
   x.onerror = function() {
-    removeTyping(tid);
-    loading = false;
+    removeTyping(tid); loading = false; setLoadingBar(100);
     document.getElementById('sendBtn').disabled = false;
-    addBubble('bot', '&#10060; Sunucuya ulasilamiyor. Tekrar deneyin.', true);
+    addBubble('bot', '&#10060; Sunucuya ulaşılamıyor. Tekrar deneyin.', true);
   };
 
   x.ontimeout = function() {
-    removeTyping(tid);
-    loading = false;
+    removeTyping(tid); loading = false; setLoadingBar(100);
     document.getElementById('sendBtn').disabled = false;
-    addBubble('bot', '&#10060; Sunucu 50 saniyede yanit vermedi. Tekrar deneyin.', true);
+    addBubble('bot', '&#10060; Sunucu 50 saniyede yanıt vermedi. Tekrar deneyin.', true);
   };
 
+  setLoadingBar(20);
   x.send(JSON.stringify({messages: messages.slice(-20)}));
 }
 
@@ -809,7 +841,7 @@ function addBubble(role, text, isErr) {
 
   var av = document.createElement('div');
   av.className   = 'mav' + (role === 'user' ? ' u' : '');
-  av.textContent = role === 'user' ? '?' : '?';
+  av.textContent = role === 'user' ? '👤' : '⚡';
 
   var b = document.createElement('div');
   b.className = 'bubble ' + role + (isErr ? ' err' : '');
@@ -819,6 +851,14 @@ function addBubble(role, text, isErr) {
   t.className    = 'btime';
   t.textContent  = new Date().toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'});
   b.appendChild(t);
+
+  if (isErr && lastQuery) {
+    var rb = document.createElement('button');
+    rb.className = 'retry-btn';
+    rb.textContent = '↩ Tekrar dene';
+    (function(q){ rb.onclick = function(){ sendMessage(q); }; })(lastQuery);
+    b.appendChild(rb);
+  }
 
   row.appendChild(av);
   row.appendChild(b);
@@ -833,7 +873,7 @@ function addTyping() {
   row.className = 'mrow';
   row.id        = id;
   var av = document.createElement('div');
-  av.className = 'mav'; av.textContent = '?';
+  av.className = 'mav'; av.textContent = '⚡';
   var tp = document.createElement('div');
   tp.className = 'typing';
   tp.innerHTML = '<div class="tdot"></div><div class="tdot"></div><div class="tdot"></div>';
@@ -851,7 +891,7 @@ function removeTyping(id) {
 function fmt(t) {
   return String(t)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
+    .replace(/[*][*]([^*]+)[*][*]/g,'<b>$1</b>')
     .replace(/\n/g,'<br>');
 }
 
@@ -859,9 +899,7 @@ function fmt(t) {
 var chips = document.querySelectorAll('.chip');
 for (var ci = 0; ci < chips.length; ci++) {
   chips[ci].onclick = function() {
-    var inp = document.getElementById('msgInp');
-    inp.value = this.textContent.trim();
-    inp.focus();
+    sendMessage(this.textContent.trim());
   };
 }
 
@@ -869,12 +907,24 @@ for (var ci = 0; ci < chips.length; ci++) {
 document.getElementById('msgInp').onkeydown = function(e) {
   if (e.keyCode === 13 && !e.shiftKey) { e.preventDefault(); sendMessage(); }
 };
+document.getElementById('msgInp').oninput = function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 100) + 'px';
+};
 
 // ── HEADER ────────────────────────────────────────────────────────────────
 document.getElementById('clearBtn').onclick = function() {
   messages = [];
-  var msgs = document.getElementById('msgs');
-  msgs.innerHTML = '<div class="welcome" id="welcome"><div class="w-ico">?</div><div class="w-title">Merhaba!</div><div class="w-sub">Soru sormak icin asagidan ornek secin veya yazin.</div></div>';
+  lastQuery = '';
+  var ms = document.getElementById('msgs');
+  ms.innerHTML = '';
+  var w = document.createElement('div'); w.className = 'welcome'; w.id = 'welcome';
+  var ico = document.createElement('div'); ico.className = 'w-ico'; ico.textContent = '👋';
+  var tit = document.createElement('div'); tit.className = 'w-title'; tit.textContent = 'Merhaba!';
+  var sub = document.createElement('div'); sub.className = 'w-sub';
+  sub.textContent = 'Soru sormak için aşağıdan örnek seçin veya yazın.';
+  w.appendChild(ico); w.appendChild(tit); w.appendChild(sub);
+  ms.appendChild(w);
   document.getElementById('sugs').style.display = 'flex';
 };
 
@@ -896,6 +946,13 @@ function toast(msg) {
 // ── SERVICE WORKER ────────────────────────────────────────────────────────
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(function(){});
+}
+
+// ── IOS PWA ───────────────────────────────────────────────────────────────
+if (/iphone|ipad|ipod/i.test(navigator.userAgent) && !window.navigator.standalone) {
+  setTimeout(function() {
+    toast('💡 Ana ekrana ekle: Paylaş → Ana Ekrana Ekle');
+  }, 4000);
 }
 
 // ── INIT ──────────────────────────────────────────────────────────────────
